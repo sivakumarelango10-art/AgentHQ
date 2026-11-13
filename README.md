@@ -2,7 +2,7 @@
 
 AgentHQ is the local company runtime behind a Hermes3D-powered AI office. **Hermes3D is the primary application and user interface**; AgentHQ provides the employee directory, local model routing, SQLite persistence, conversations and the runtime API.
 
-The intended daily experience is the native Hermes3D Studio at `http://127.0.0.1:3000/office`, connected to the AgentHQ FastAPI service at `http://127.0.0.1:8000`. The older Vite application in `frontend/` is retained as a legacy/reference dashboard while its remaining useful features are migrated. Do not launch it as a second product shell for normal use.
+The intended daily experience is the native Hermes3D Studio at `http://localhost:3000/office`, connected to the AgentHQ FastAPI service at `http://127.0.0.1:8000`. The older Vite application in `frontend/` is retained as a legacy/reference dashboard while its remaining useful features are migrated. Do not launch it as a second product shell for normal use.
 
 ## Architecture
 
@@ -50,7 +50,7 @@ The script:
 - refuses to silently reuse an unrelated process on ports 8000 or 3000;
 - opens the Hermes3D office in the browser.
 
-Daily entry point: **`http://127.0.0.1:3000/office`**.
+Daily entry point: **`http://localhost:3000/office`**.
 
 ## 2. Hermes3D Custom runtime connection
 
@@ -89,7 +89,7 @@ cd E:\Hermes3D
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000/office`.
+Open `http://localhost:3000/office`.
 
 Do not start `E:\AgentHQ\frontend` for normal use. Its Vite app on port 5173 is retained temporarily for reference and for management features not yet migrated into Hermes3D.
 

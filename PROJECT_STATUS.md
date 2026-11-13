@@ -6,7 +6,7 @@ Current version: **0.5.0 — Hermes3D-first architecture**
 
 Hermes3D is the primary user-facing application and visual foundation. AgentHQ FastAPI + SQLite + Ollama is the authoritative company runtime and data service. The older AgentHQ Vite/React application is retained as a legacy/reference dashboard during migration; it is not the normal startup target and must not be nested around Hermes3D.
 
-Daily browser entry: `http://127.0.0.1:3000/office`.
+Daily browser entry: `http://localhost:3000/office`.
 
 Start both services with `E:\AgentHQ\start-agenthq-stack.ps1`. See `README.md` and `docs/HERMES3D_FIRST_AUDIT_AND_MIGRATION.md`.
 

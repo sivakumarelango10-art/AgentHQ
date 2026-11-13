@@ -31,7 +31,7 @@ function Test-AgentHQApi {
 
 function Test-Hermes3DPage {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:3000/office" -Method Get -TimeoutSec 5
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:3000/office" -Method Get -TimeoutSec 5
         return ($response.StatusCode -eq 200 -and $response.Content -match "HERMES3D|Next.js|office")
     }
     catch { return $false }
@@ -70,7 +70,7 @@ Write-Host ""
 Write-Host "AgentHQ - Hermes3D-first startup" -ForegroundColor Cyan
 Write-Host "Backend:  $BackendPath"
 Write-Host "Studio:   $Hermes3DPath"
-Write-Host "UI:       http://127.0.0.1:3000/office"
+Write-Host "UI:       http://localhost:3000/office"
 Write-Host ""
 
 # Ollama is checked but not launched here; the installed Ollama service owns its lifecycle.
@@ -116,10 +116,10 @@ else {
 
 Write-Host ""
 Write-Host "Startup checks complete." -ForegroundColor Green
-Write-Host "Use Hermes3D as the AgentHQ application: http://127.0.0.1:3000/office" -ForegroundColor Cyan
+Write-Host "Use Hermes3D as the AgentHQ application: http://localhost:3000/office" -ForegroundColor Cyan
 Write-Host "Connect its Custom backend to http://127.0.0.1:8000." -ForegroundColor Cyan
 Write-Host "The old AgentHQ Vite UI on port 5173 is intentionally not started." -ForegroundColor DarkGray
 
 if (-not $NoBrowser) {
-    Start-Process "http://127.0.0.1:3000/office"
+    Start-Process "http://localhost:3000/office"
 }
