@@ -198,7 +198,6 @@ async def hermes3d_runtime_state() -> dict[str, Any]:
         "identity": {
             "name": "AgentHQ",
             "role": "AI Company",
-            "lane": "agenthq",
             "model_id": model or OLLAMA_MODEL,
         },
         "runtime": {
