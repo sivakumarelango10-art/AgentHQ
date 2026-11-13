@@ -36,7 +36,7 @@ Set-ExecutionPolicy -Scope Process Bypass -Force
 This starts only the AgentHQ FastAPI runtime and Hermes3D Studio. Open:
 
 ```text
-http://127.0.0.1:3000/office
+http://localhost:3000/office
 ```
 
 In Hermes3D choose **Custom backend** and set:
