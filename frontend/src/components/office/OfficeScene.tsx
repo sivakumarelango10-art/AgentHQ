@@ -115,6 +115,15 @@ function MeetingArea() {
   </group>
 }
 
+function employeePosition(agentId: string, index: number): [number, number, number] {
+  const known = employeePositions[agentId]
+  if (known) return known
+  const slot = index - Object.keys(employeePositions).length
+  const column = slot % 4
+  const row = Math.floor(slot / 4)
+  return [-4.8 + column * 3.2, 0.05, 5.1 + row * 1.45]
+}
+
 function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Props, 'agents' | 'selectedAgentId' | 'onSelectAgent'>) {
   return <>
     <color attach="background" args={['#d8d6cd']} />
@@ -181,9 +190,9 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Prop
     <RoomLabel position={[-7.5, 2.75, 1.9]}>DESIGN STUDIO</RoomLabel>
     <RoomLabel position={[1.7, 2.65, 4.0]}>MEETING ROOM</RoomLabel>
 
-    {agents.map((agent) => {
-      // Phase 1 positions are illustrative. Real task states and navigation drive these later.
-      const position = employeePositions[agent.id] ?? [0, 0.05, 0]
+    {agents.map((agent, index) => {
+      // Employee records are persistent in Phase 2; spatial navigation is added with task-driven movement.
+      const position = employeePosition(agent.id, index)
       return <Person key={agent.id} agent={agent} position={position} selected={selectedAgentId === agent.id} onClick={() => onSelectAgent(agent.id)} />
     })}
 
