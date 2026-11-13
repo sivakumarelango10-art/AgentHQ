@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Literal
@@ -53,6 +54,25 @@ class ChatRequest(BaseModel):
         return value
 
 
+class RuntimeChatMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(max_length=12000)
+
+
+class RuntimeChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    model: str | None = Field(default=None, max_length=120)
+    messages: list[RuntimeChatMessage] = Field(min_length=1, max_length=100)
+    stream: bool = False
+    role: str | None = Field(default=None, max_length=120)
+    lane: str | None = Field(default=None, max_length=120)
+    conversation_id: str | None = Field(default=None, max_length=200)
+    session_id: str | None = Field(default=None, max_length=200)
+
+
 class TaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,7 +105,7 @@ app = FastAPI(title=APP_NAME, version="0.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -118,6 +138,159 @@ async def health() -> dict[str, Any]:
         "database": "connected",
         "ollama_connected": ollama_connected,
         "model": found_model or (OLLAMA_MODEL if ollama_connected else None),
+    }
+
+
+def runtime_agent_key(name: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
+    return key or "employee"
+
+
+def get_runtime_agent_catalog() -> list[dict[str, Any]]:
+    """Expose stable, name-based identifiers expected by Hermes3D's custom runtime provider."""
+    agents = db.list_agents()
+    used: set[str] = set()
+    catalog: list[dict[str, Any]] = []
+    for agent in agents:
+        key = runtime_agent_key(str(agent["name"]))
+        if key in used:
+            key = f"{key}-{str(agent['id'])[-6:]}"
+        used.add(key)
+        catalog.append({**agent, "runtime_id": key})
+    return catalog
+
+
+def resolve_runtime_agent(runtime_id: str | None) -> dict[str, Any] | None:
+    key = (runtime_id or "").strip().casefold()
+    if not key:
+        return None
+    for agent in get_runtime_agent_catalog():
+        if key in {str(agent["runtime_id"]).casefold(), str(agent["id"]).casefold()}:
+            return agent
+    return None
+
+
+@app.get("/health")
+async def hermes3d_runtime_health() -> dict[str, Any]:
+    connected, model = await get_ollama_status()
+    return {
+        "ok": True,
+        "status": "ok" if connected else "degraded",
+        "runtime": "AgentHQ",
+        "database": "connected",
+        "ollama_connected": connected,
+        "model": model or (OLLAMA_MODEL if connected else None),
+    }
+
+
+@app.get("/state")
+async def hermes3d_runtime_state() -> dict[str, Any]:
+    agents = get_runtime_agent_catalog()
+    connected, model = await get_ollama_status()
+    active = {
+        str(agent["runtime_id"]): (model or OLLAMA_MODEL)
+        for agent in agents
+    }
+    return {
+        "profileName": "agenthq-local",
+        "registry_profile": "agenthq-local",
+        "active": active,
+        "identity": {
+            "name": "AgentHQ",
+            "role": "AI Company",
+            "lane": "agenthq",
+            "model_id": model or OLLAMA_MODEL,
+        },
+        "runtime": {
+            "name": "AgentHQ Local Runtime",
+            "version": "0.4.0",
+            "vendor": "AgentHQ",
+            "status": "online" if connected else "degraded",
+            "active_model": model or OLLAMA_MODEL,
+            "governance": "local-only",
+        },
+        "capabilities": ["agents", "sessions", "chat", "models", "agent-roles"],
+    }
+
+
+@app.get("/registry")
+async def hermes3d_runtime_registry() -> dict[str, Any]:
+    connected, model = await get_ollama_status()
+    selected_model = model or OLLAMA_MODEL
+    return {
+        "profile": "agenthq-local",
+        "models": {
+            selected_model: {
+                "id": selected_model,
+                "name": selected_model,
+                "provider": "ollama",
+                "available": connected,
+            }
+        },
+    }
+
+
+@app.post("/v1/chat/completions")
+async def hermes3d_chat_completions(payload: RuntimeChatCompletionRequest) -> dict[str, Any]:
+    if payload.stream:
+        raise HTTPException(
+            status_code=400,
+            detail="AgentHQ runtime currently supports non-streaming chat completions only.",
+        )
+
+    latest_user_message = next(
+        (item.content.strip() for item in reversed(payload.messages) if item.role == "user" and item.content.strip()),
+        "",
+    )
+    if not latest_user_message:
+        raise HTTPException(status_code=400, detail="At least one non-empty user message is required.")
+
+    requested_agent_key = payload.lane or payload.role
+    if not requested_agent_key and payload.session_id:
+        match = re.match(r"^agent:([^:]+):", payload.session_id.strip())
+        requested_agent_key = match.group(1) if match else None
+    agent = resolve_runtime_agent(requested_agent_key)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="The requested AgentHQ employee was not found.")
+
+    runtime_session_id = (payload.session_id or payload.conversation_id or "").strip()
+    if not runtime_session_id:
+        runtime_session_id = f"agent:{agent['runtime_id']}:main"
+
+    try:
+        conversation_id = db.get_or_create_runtime_conversation(
+            str(agent["id"]),
+            runtime_session_id,
+            title=f"{agent['name']} · Hermes3D",
+        )
+        result = await chat_with_agent(
+            str(agent["id"]),
+            ChatRequest(message=latest_user_message, conversation_id=conversation_id),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    assistant_text = str(result["assistant_message"]["content"])
+    return {
+        "id": f"chatcmpl-{result['assistant_message']['id']}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": OLLAMA_MODEL,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": assistant_text},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+        "agent": result["agent"],
+        "conversation_id": result["conversation_id"],
+        "latency_ms": result["latency_ms"],
     }
 
 
