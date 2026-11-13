@@ -1,3 +1,7 @@
+> **SUPERSEDED — historical implementation note.** This iframe/Vite-proxy integration was a temporary proof of connectivity. It is not the target AgentHQ architecture. Do not follow its startup instructions or launch the AgentHQ Vite shell for normal use. The current decision is Hermes3D-first: open `http://127.0.0.1:3000/office` directly and connect Hermes3D's Custom backend to AgentHQ at `http://127.0.0.1:8000`. See [the architecture audit](../../docs/HERMES3D_FIRST_AUDIT_AND_MIGRATION.md) and [current runtime setup](AGENTHQ_RUNTIME.md).
+
+---
+
 # Hermes3D embedded in AgentHQ
 
 ## User experience
