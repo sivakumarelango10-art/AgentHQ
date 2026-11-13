@@ -285,16 +285,15 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent, quality }: 
     <RoomLabel position={[1.7, 2.65, 4.0]}>MEETING ROOM</RoomLabel>
 
     {(() => {
-      // Keep starter employees at their authored coordinates. New employees
-      // receive the next free location in their assigned room, regardless of
-      // the department-sorted order returned by the database.
-      const customRoomIndexes = new Map<string, number>()
+      // Employee positions are allocated by assigned room, not by the
+      // department-sorted database index.
+      const roomIndexes = new Map<string, number>()
       return agents.map((agent) => {
         const roomKey = agent.room.trim().toLowerCase()
-        const customRoomIndex = customRoomIndexes.get(roomKey) ?? 0
+        const roomIndex = roomIndexes.get(roomKey) ?? 0
         const isStarterEmployee = Boolean(employeePositions[agent.id])
-        if (!isStarterEmployee) customRoomIndexes.set(roomKey, customRoomIndex + 1)
-        const position = employeePosition(agent, customRoomIndex)
+        if (!isStarterEmployee) roomIndexes.set(roomKey, roomIndex + 1)
+        const position = employeePosition(agent, roomIndex)
         return <Person key={agent.id} agent={agent} position={position} selected={selectedAgentId === agent.id} onClick={() => onSelectAgent(agent.id)} />
       })
     })()}
