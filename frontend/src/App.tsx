@@ -25,11 +25,12 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { OfficeScene } from './components/office/OfficeScene'
+import { ConversationsView } from './components/chat/ConversationsView'
 import { initialAgents } from './data'
 import { addAgent, addTask, cancelTask, getAgents, getHealth, getTasks } from './api'
 import type { Agent, AgentCreateInput, BackendHealth, Task, TaskCreateInput, TaskPriority } from './types'
 
- type View = 'overview' | 'employees' | 'tasks'
+ type View = 'overview' | 'employees' | 'tasks' | 'conversations'
 
 function App() {
   const [agents, setAgents] = useState<Agent[]>(initialAgents)
@@ -145,7 +146,7 @@ function App() {
           <button className={`nav-item ${activeView === 'overview' ? 'active' : ''}`} onClick={() => setActiveView('overview')}><LayoutDashboard size={17} />Office overview</button>
           <button className={`nav-item ${activeView === 'employees' ? 'active' : ''}`} onClick={() => setActiveView('employees')}><Users size={17} />Employees <span className="nav-count">{agents.length}</span></button>
           <button className={`nav-item ${activeView === 'tasks' ? 'active' : ''}`} onClick={() => setActiveView('tasks')}><Activity size={17} />Tasks <span className="nav-count">{queuedCount}</span></button>
-          <button className="nav-item nav-item-disabled" disabled title="Conversation history is planned for a later milestone"><MessageSquareText size={17} />Conversations</button>
+          <button className={`nav-item ${activeView === 'conversations' ? 'active' : ''}`} onClick={() => setActiveView('conversations')}><MessageSquareText size={17} />Conversations</button>
         </nav>
 
         <div className="nav-label departments-label">DEPARTMENTS</div>
@@ -171,7 +172,7 @@ function App() {
 
       <section className="main-area">
         <header className="topbar">
-          <div className="breadcrumb"><span>Workspace</span><span className="crumb-sep">/</span><strong>{activeView === 'overview' ? 'Office overview' : activeView === 'employees' ? 'Employees' : 'Tasks'}</strong></div>
+          <div className="breadcrumb"><span>Workspace</span><span className="crumb-sep">/</span><strong>{activeView === 'overview' ? 'Office overview' : activeView === 'employees' ? 'Employees' : activeView === 'tasks' ? 'Tasks' : 'Conversations'}</strong></div>
           <div className="topbar-actions">
             <div className={`connection-pill ${backend ? 'connected' : ''}`}><span className="connection-dot" />{backend ? 'Backend connected' : 'Backend offline'}</div>
             <button className="icon-button refresh-button" onClick={() => void refreshData(true)} aria-label="Refresh local data" title="Refresh local data"><RefreshCw size={15} className={isRefreshing ? 'spin' : ''} /></button>
@@ -253,7 +254,7 @@ function App() {
                   <span className="directory-activity">{agent.currentTask}</span>
                 </button>)}
               </div>
-              <div className="info-strip"><Bot size={16} /><span>Employee profiles are real and persistent. Their AI reasoning and task execution will be connected in the next milestone.</span></div>
+              <div className="info-strip"><Bot size={16} /><span>Employee profiles are persistent. Role-aware local AI conversations are available; task execution will be introduced separately.</span></div>
             </section>
           )}
 
@@ -280,6 +281,8 @@ function App() {
               <div className="info-strip"><Clock3 size={16} /><span>Queued means saved for future execution. No employee will claim or complete a task until the AI execution engine is implemented.</span></div>
             </section>
           )}
+
+          {activeView === 'conversations' && <ConversationsView agents={agents} />}
         </div>
       </section>
 
@@ -350,7 +353,7 @@ function EmployeeModal({ saving, onClose, onSubmit }: { saving: boolean; onClose
       </div>
       <label className="form-field color-field"><span>Employee color</span><input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label>
       {error && <div className="form-error">{error}</div>}
-      <div className="modal-footnote"><Users size={14} />New employees start as idle. Their AI role will be configured separately.</div>
+      <div className="modal-footnote"><Users size={14} />New employees start as idle. Their chat behavior is guided by the role and department you selected.</div>
       <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>Cancel</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Add employee'} <UserPlus size={15} /></button></div>
     </form>
   </div>
