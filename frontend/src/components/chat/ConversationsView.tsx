@@ -97,14 +97,28 @@ export function ConversationsView({ agents }: Props) {
     setError(null)
     setNotice(null)
     setDraft('')
+    const pendingId = 'pending-' + Date.now()
+    const pendingMessage: ConversationMessage = {
+      id: pendingId,
+      conversation_id: activeConversationId ?? 'pending',
+      role: 'user',
+      content: message,
+      created_at: new Date().toISOString(),
+    }
+    setMessages((current) => [...current, pendingMessage])
     try {
       const result = await sendAgentMessage(activeAgent.id, message, activeConversationId)
       setActiveConversationId(result.conversation_id)
-      setMessages((current) => [...current, result.user_message, result.assistant_message])
+      setMessages((current) => [
+        ...current.filter((item) => item.id !== pendingId),
+        result.user_message,
+        result.assistant_message,
+      ])
       const updated = await getConversations()
       setConversations(updated)
       setNotice(result.agent.name + ' replied using ' + result.model + ' in ' + (result.latency_ms / 1000).toFixed(1) + 's.')
     } catch (cause) {
+      setMessages((current) => current.filter((item) => item.id !== pendingId))
       setDraft(message)
       setError(cause instanceof Error ? cause.message : 'The local AI employee could not respond.')
     } finally {
