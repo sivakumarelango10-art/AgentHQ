@@ -494,55 +494,55 @@ async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]
             )
             response.raise_for_status()
             result = response.json()
-        if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
-            raise HTTPException(status_code=502, detail="Ollama returned an unexpected chat response.")
-        message_result = result["message"]
-        reply = extract_user_facing_reply(message_result.get("content", ""))
-
-        if not reply:
-            # Retry once with a strict final-answer-only system instruction.
-            # The rejected draft is never stored or returned to the client.
-            retry_messages = list(ollama_messages)
-            retry_messages[0] = {
-                "role": "system",
-                "content": (
-                    build_agent_system_prompt(agent)
-                    + " FINAL RESPONSE REQUIREMENT: Return only the final answer for the Founder. "
-                    "Do not output analysis, self-talk, scratchpad, planning notes, or think tags. "
-                    "If uncertain, state the uncertainty briefly and give a concise useful answer."
-                ),
-            }
-            retry_payload = build_ollama_chat_payload(retry_messages)
-            retry_payload["options"]["temperature"] = 0.3
-            retry_payload["options"]["num_predict"] = 850
-            retry_response = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json=retry_payload,
-            )
-            retry_response.raise_for_status()
-            retry_result = retry_response.json()
-            retry_message = (
-                retry_result.get("message")
-                if isinstance(retry_result, dict)
-                else None
-            )
-            retry_message = retry_message if isinstance(retry_message, dict) else {}
-            reply = extract_user_facing_reply(retry_message.get("content", ""))
+            if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
+                raise HTTPException(status_code=502, detail="Ollama returned an unexpected chat response.")
+            message_result = result["message"]
+            reply = extract_user_facing_reply(message_result.get("content", ""))
 
             if not reply:
-                thinking_present = bool(
-                    isinstance(retry_message.get("thinking"), str)
-                    and retry_message["thinking"].strip()
-                )
-                done_reason = str(retry_result.get("done_reason") or "unknown")[:40] if isinstance(retry_result, dict) else "invalid"
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        "The local model did not produce a clean final answer after one retry. "
-                        f"(done_reason={done_reason}, thinking_present={thinking_present}). "
-                        "The rejected draft was not saved or displayed. Please retry with a shorter prompt."
+                # Retry once with a strict final-answer-only system instruction.
+                # The rejected draft is never stored or returned to the client.
+                retry_messages = list(ollama_messages)
+                retry_messages[0] = {
+                    "role": "system",
+                    "content": (
+                        build_agent_system_prompt(agent)
+                        + " FINAL RESPONSE REQUIREMENT: Return only the final answer for the Founder. "
+                        "Do not output analysis, self-talk, scratchpad, planning notes, or think tags. "
+                        "If uncertain, state the uncertainty briefly and give a concise useful answer."
                     ),
+                }
+                retry_payload = build_ollama_chat_payload(retry_messages)
+                retry_payload["options"]["temperature"] = 0.3
+                retry_payload["options"]["num_predict"] = 850
+                retry_response = await client.post(
+                    f"{OLLAMA_BASE_URL}/api/chat",
+                    json=retry_payload,
                 )
+                retry_response.raise_for_status()
+                retry_result = retry_response.json()
+                retry_message = (
+                    retry_result.get("message")
+                    if isinstance(retry_result, dict)
+                    else None
+                )
+                retry_message = retry_message if isinstance(retry_message, dict) else {}
+                reply = extract_user_facing_reply(retry_message.get("content", ""))
+
+                if not reply:
+                    thinking_present = bool(
+                        isinstance(retry_message.get("thinking"), str)
+                        and retry_message["thinking"].strip()
+                    )
+                    done_reason = str(retry_result.get("done_reason") or "unknown")[:40] if isinstance(retry_result, dict) else "invalid"
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "The local model did not produce a clean final answer after one retry. "
+                            f"(done_reason={done_reason}, thinking_present={thinking_present}). "
+                            "The rejected draft was not saved or displayed. Please retry with a shorter prompt."
+                        ),
+                    )
         assistant_message = db.add_conversation_message(conversation_id, "assistant", reply)
         latency_ms = round((time.perf_counter() - started_at) * 1000)
         return {
