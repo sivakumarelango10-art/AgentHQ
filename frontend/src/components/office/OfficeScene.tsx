@@ -115,13 +115,76 @@ function MeetingArea() {
   </group>
 }
 
-function employeePosition(agentId: string, index: number): [number, number, number] {
-  const known = employeePositions[agentId]
+const additionalEmployeeSlots: Record<string, [number, number, number][]> = {
+  "ceo office": [
+    [-6.1, 0.05, -3.0],
+    [-9.1, 0.05, -3.0],
+    [-6.1, 0.05, -1.0],
+  ],
+  "development room": [
+    // Open engineering workstation to the right of the seeded desks.
+    [1.55, 0.05, 0.05],
+    [6.4, 0.05, -1.6],
+    [6.4, 0.05, 0.2],
+    [1.55, 0.05, -4.0],
+    [4.7, 0.05, -4.0],
+    [6.4, 0.05, -4.0],
+  ],
+  "design studio": [
+    [-9.0, 0.05, 3.15],
+    [-9.0, 0.05, 5.0],
+    [-6.2, 0.05, 4.8],
+  ],
+  "research room": [
+    [6.7, 0.05, -4.0],
+    [8.2, 0.05, -2.0],
+    [8.2, 0.05, 0.0],
+  ],
+  "testing lab": [
+    [-3.0, 0.05, 5.5],
+    [-0.8, 0.05, 5.5],
+    [3.7, 0.05, 5.5],
+  ],
+  "meeting room": [
+    [2.65, 0.05, 3.02],
+    [0.55, 0.05, 4.58],
+    [2.65, 0.05, 4.58],
+  ],
+  reception: [
+    [-4.8, 0.05, 5.6],
+    [-2.4, 0.05, 5.6],
+    [0.0, 0.05, 5.6],
+  ],
+}
+
+const defaultOverflowSlots: [number, number, number][] = [
+  [-4.6, 0.05, 5.6],
+  [-2.3, 0.05, 5.6],
+  [0.0, 0.05, 5.6],
+  [2.3, 0.05, 5.6],
+  [4.6, 0.05, 5.6],
+  [6.9, 0.05, 5.6],
+]
+
+function employeePosition(agent: Agent, customRoomIndex: number): [number, number, number] {
+  const known = employeePositions[agent.id]
   if (known) return known
-  const slot = index - Object.keys(employeePositions).length
-  const column = slot % 4
-  const row = Math.floor(slot / 4)
-  return [-4.8 + column * 3.2, 0.05, 5.1 + row * 1.45]
+
+  const roomKey = agent.room.trim().toLowerCase()
+  const slots = additionalEmployeeSlots[roomKey] ?? defaultOverflowSlots
+  const knownSlot = slots[customRoomIndex]
+  if (knownSlot) return knownSlot
+
+  // Keep overflow hires on the office floor instead of extrapolating from
+  // the employee's global array index (which is sorted by department).
+  const overflowIndex = customRoomIndex - slots.length
+  const column = overflowIndex % 6
+  const row = Math.floor(overflowIndex / 6)
+  return [
+    -5.75 + column * 2.3,
+    0.05,
+    6.15 - row * 1.15,
+  ]
 }
 
 function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Props, 'agents' | 'selectedAgentId' | 'onSelectAgent'>) {
@@ -190,11 +253,20 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Prop
     <RoomLabel position={[-7.5, 2.75, 1.9]}>DESIGN STUDIO</RoomLabel>
     <RoomLabel position={[1.7, 2.65, 4.0]}>MEETING ROOM</RoomLabel>
 
-    {agents.map((agent, index) => {
-      // Employee records are persistent in Phase 2; spatial navigation is added with task-driven movement.
-      const position = employeePosition(agent.id, index)
-      return <Person key={agent.id} agent={agent} position={position} selected={selectedAgentId === agent.id} onClick={() => onSelectAgent(agent.id)} />
-    })}
+    {(() => {
+      // Preserve the authored coordinates for the six starter employees.
+      // Custom employees are positioned by their room, independent of the
+      // database's department sort order.
+      const customRoomIndexes = new Map<string, number>()
+      return agents.map((agent) => {
+        const roomKey = agent.room.trim().toLowerCase()
+        const customRoomIndex = customRoomIndexes.get(roomKey) ?? 0
+        const isStarterEmployee = Boolean(employeePositions[agent.id])
+        if (!isStarterEmployee) customRoomIndexes.set(roomKey, customRoomIndex + 1)
+        const position = employeePosition(agent, customRoomIndex)
+        return <Person key={agent.id} agent={agent} position={position} selected={selectedAgentId === agent.id} onClick={() => onSelectAgent(agent.id)} />
+      })
+    })()}
 
     <ContactShadows position={[0, -0.035, 0]} opacity={0.27} scale={22} blur={2.4} far={8} resolution={512} color="#303a34" />
   </>
