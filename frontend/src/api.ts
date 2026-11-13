@@ -14,8 +14,34 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 8000): P
   if (!response.ok) {
     let message = `Request failed (${response.status})`
     try {
-      const payload = (await response.json()) as { detail?: string }
-      if (payload.detail) message = payload.detail
+      const payload: unknown = await response.json()
+      if (payload && typeof payload === 'object') {
+        const record = payload as Record<string, unknown>
+        const detail = record.detail
+        if (typeof detail === 'string' && detail.trim()) {
+          message = detail.trim()
+        } else if (Array.isArray(detail)) {
+          const messages = detail
+            .map((item) => {
+              if (!item || typeof item !== 'object') return String(item)
+              const entry = item as Record<string, unknown>
+              const location = Array.isArray(entry.loc) ? entry.loc.filter((part) => typeof part === 'string' || typeof part === 'number').join('.') : ''
+              const text = typeof entry.msg === 'string' ? entry.msg : ''
+              return [location, text].filter(Boolean).join(': ')
+            })
+            .filter(Boolean)
+          if (messages.length) message = messages.join('; ')
+        } else if (detail && typeof detail === 'object') {
+          const detailRecord = detail as Record<string, unknown>
+          if (typeof detailRecord.message === 'string') {
+            message = detailRecord.message
+          } else {
+            message = JSON.stringify(detail)
+          }
+        } else if (typeof record.message === 'string' && record.message.trim()) {
+          message = record.message.trim()
+        }
+      }
     } catch {
       // Keep the HTTP fallback message when the response is not JSON.
     }
