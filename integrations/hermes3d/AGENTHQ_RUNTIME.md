@@ -6,7 +6,7 @@ Hermes3D is the primary application and UI. AgentHQ FastAPI is the local company
 
 | Service | Purpose | Address |
 |---|---|---|
-| Hermes3D Studio | Primary browser application: office, avatars, chat, Studio panels and settings | `http://127.0.0.1:3000/office` |
+| Hermes3D Studio | Primary browser application: office, avatars, chat, Studio panels and settings | `http://localhost:3000/office` |
 | AgentHQ FastAPI | Employee, chat, task and runtime API | `http://127.0.0.1:8000` |
 | Ollama | Local model runtime | `http://127.0.0.1:11434` |
 | AgentHQ legacy Vite UI | Retained only for reference during migration; not started in the normal workflow | `http://127.0.0.1:5173` |
