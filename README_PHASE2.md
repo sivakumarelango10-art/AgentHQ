@@ -1,5 +1,7 @@
 # AgentHQ Phase 2 — Persistent Employees & Task Inbox
 
+> **Historical phase guide:** This document describes the earlier AgentHQ Vite application. The current product direction is Hermes3D-first: use `start-agenthq-stack.ps1` and open `http://127.0.0.1:3000/office`. The Vite UI is retained only as a legacy/reference dashboard. See `docs/HERMES3D_FIRST_AUDIT_AND_MIGRATION.md`.
+
 This update adds the first real management layer to AgentHQ. It replaces the hard-coded employee API with SQLite-backed employee records and adds task creation, assignment, listing, and cancellation.
 
 ## Scope of this milestone

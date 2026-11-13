@@ -1,5 +1,7 @@
 # AgentHQ Phase 3 — AI Employee Conversations
 
+> **Historical phase guide:** This document describes the earlier AgentHQ Vite application. The current product direction is Hermes3D-first: use `start-agenthq-stack.ps1` and open `http://127.0.0.1:3000/office`. The Vite UI is retained only as a legacy/reference dashboard. See `docs/HERMES3D_FIRST_AUDIT_AND_MIGRATION.md`.
+
 Phase 3 connects the persisted employee directory to the local Ollama model and adds a persistent conversation workspace.
 
 ## What is included

@@ -42,6 +42,11 @@ SEED_AGENTS: list[dict[str, str]] = [
         "department": "Quality & Testing", "status": "idle", "room": "Meeting Room",
         "color": "#d69a70", "current_task": "Available — awaiting assignment",
     },
+    {
+        "id": "kiran", "name": "Kiran", "role": "Software Engineer",
+        "department": "Engineering", "status": "idle", "room": "Development Room",
+        "color": "#7d8cbc", "current_task": "Available — awaiting assignment",
+    },
 ]
 
 
