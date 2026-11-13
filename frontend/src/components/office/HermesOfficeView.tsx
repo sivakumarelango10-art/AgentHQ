@@ -5,7 +5,7 @@ export function HermesOfficeView() {
     <section className="hermes-office-view">
       <div className="hermes-office-heading">
         <div>
-          <div className="eyebrow"><span className="eyebrow-line" /> HERMES3D · AGENTHQ LOCAL STUDIO</div>
+          <div className="eyebrow"><span className="eyebrow-line" /><Box size={13} /> HERMES3D · AGENTHQ LOCAL STUDIO</div>
           <h1>Live Office</h1>
           <p>Your AgentHQ team inside the immersive 3D office. The office is embedded in this workspace and uses the AgentHQ local runtime.</p>
         </div>
