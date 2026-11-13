@@ -133,6 +133,16 @@ def init_db() -> None:
                 ON conversations(agent_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
                 ON conversation_messages(conversation_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS runtime_sessions (
+                session_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
             """
         )
         count = connection.execute("SELECT COUNT(*) AS total FROM agents").fetchone()["total"]
@@ -355,3 +365,59 @@ def add_conversation_message(conversation_id: str, role: str, content: str) -> d
         "content": content,
         "created_at": now,
     }
+
+
+
+def get_or_create_runtime_conversation(
+    agent_id: str,
+    session_id: str,
+    title: str = "Hermes3D conversation",
+) -> str:
+    """Persist the mapping from a Hermes3D session key to an AgentHQ conversation."""
+    safe_session_id = session_id.strip()[:200]
+    if not safe_session_id:
+        raise ValueError("Runtime session ID is required.")
+    now = utc_now()
+    with connect() as connection:
+        agent = connection.execute(
+            "SELECT id FROM agents WHERE id = ?", (agent_id,)
+        ).fetchone()
+        if agent is None:
+            raise ValueError("The selected employee does not exist.")
+
+        existing = connection.execute(
+            "SELECT agent_id, conversation_id FROM runtime_sessions WHERE session_id = ?",
+            (safe_session_id,),
+        ).fetchone()
+        if existing:
+            if existing["agent_id"] != agent_id:
+                raise ValueError("Runtime session belongs to a different employee.")
+            conversation = connection.execute(
+                "SELECT id FROM conversations WHERE id = ?",
+                (existing["conversation_id"],),
+            ).fetchone()
+            if conversation:
+                connection.execute(
+                    "UPDATE runtime_sessions SET updated_at = ? WHERE session_id = ?",
+                    (now, safe_session_id),
+                )
+                return str(existing["conversation_id"])
+            connection.execute(
+                "DELETE FROM runtime_sessions WHERE session_id = ?",
+                (safe_session_id,),
+            )
+
+        conversation_id = str(uuid4())
+        safe_title = " ".join(title.split())[:72] or "Hermes3D conversation"
+        connection.execute(
+            """INSERT INTO conversations (id, agent_id, title, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (conversation_id, agent_id, safe_title, now, now),
+        )
+        connection.execute(
+            """INSERT INTO runtime_sessions
+               (session_id, agent_id, conversation_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (safe_session_id, agent_id, conversation_id, now, now),
+        )
+        return conversation_id
