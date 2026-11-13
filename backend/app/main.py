@@ -248,7 +248,9 @@ async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]
             )
             response.raise_for_status()
             result = response.json()
-        reply = str(result.get("message", {}).get("content", "")).strip()
+        if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
+            raise HTTPException(status_code=502, detail="Ollama returned an unexpected chat response.")
+        reply = str(result["message"].get("content", "")).strip()
         if not reply:
             raise HTTPException(status_code=502, detail="The local model returned an empty response.")
         assistant_message = db.add_conversation_message(conversation_id, "assistant", reply)

@@ -71,7 +71,7 @@ export async function getConversationMessages(conversationId: string): Promise<{
   conversation: Conversation
   items: ConversationMessage[]
 }> {
-  return request('/api/conversations/' + encodeURIComponent(conversationId) + '/messages')
+  return request<{ conversation: Conversation; items: ConversationMessage[] }>('/api/conversations/' + encodeURIComponent(conversationId) + '/messages')
 }
 
 export async function sendAgentMessage(

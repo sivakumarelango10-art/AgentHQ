@@ -1,40 +1,36 @@
 # AgentHQ implementation status
 
-Current version: **0.2.0** (UI refresh)
+Current version: **0.3.0 — AI Employee Conversations**
 
 ## Working foundations
-- React + TypeScript + Vite application shell.
-- Interactive React Three Fiber office with procedural floor, walls, partitions, desks, chairs, meeting table and plants.
-- Selectable 3D employee figures and name tags.
-- Employee directory backed by local SQLite records.
+- React + TypeScript + Vite application shell with the premium responsive UI.
+- Interactive React Three Fiber office with selectable employee figures.
+- Persistent employee directory and task queue stored in local SQLite.
 - Add employee workflow with department, room and color fields.
-- Task creation with title, description, priority and optional employee assignment.
-- Task inbox with queued/cancelled states and cancellation.
-- Frontend refresh/polling for local employee and task data.
-- FastAPI health endpoint, SQLite status and local Ollama reachability checks.
-- Local WebSocket event channel foundation.
-- Local Qwen3 model available through Ollama.
+- Create, assign, list and cancel queued tasks.
+- FastAPI backend with local Ollama health checks.
+- Local Qwen3 model integration through Ollama.
+- Role-aware AI employee chat using each employee's name, role, department and office.
+- Persistent conversations and message history in SQLite.
+- Conversation workspace with employee selection, recent chats, message history and local-model status.
+- Chat responses update the employee's working/idle status while the model is responding.
 
-## Current UI refinement
-The premium UI redesign has been merged into `main`:
-- Higher-contrast typography and clearer hierarchy.
-- More consistent spacing, larger controls and accessible focus states.
-- Refined sidebar, navigation, workspace header and metric cards.
-- Larger office viewport with a more balanced employee panel.
-- Improved employee directory and task inbox cards.
-- Reworked dialogs with a darker, opaque backdrop so 3D labels do not bleed through.
-- Responsive layouts for desktop, tablet and mobile.
-- No paid UI libraries or remote runtime dependencies.
+## Phase 3 scope and boundaries
+- AI employees can reason about requests, discuss plans, answer questions and draft text/code in chat.
+- The last 16 messages in a conversation are included as context.
+- Conversation history is stored locally in `backend/data/agenthq.db`.
+- The backend calls the locally configured Ollama model; no hosted AI provider or API key is required.
+- Chat requests have a bounded 180-second timeout and use a 4K context setting by default.
 
-## Not implemented yet
-- AI reasoning/chat initiated from the dashboard.
+Not implemented yet:
 - Automatic task claiming, execution, completion, retries or progress reporting.
 - Agent-to-agent delegation and autonomous scheduling.
 - Sandboxed file tools, terminal tools, approvals and audit logs.
-- Rigged human character models and task-driven walking/typing animations.
-- Conversation history and full settings screens.
+- Live web research or access to local project files.
+- Rigged character models and task-driven walking/typing animations.
+- Conversation search, deletion, export and configurable memory management.
 
-A task marked **Queued** is only saved in the local database. It has not been executed by an AI employee.
+A task marked **Queued** is still only saved in the local database. Chatting with an employee does not execute queued tasks.
 
 ## Local run commands
 
@@ -56,5 +52,23 @@ URLs:
 - API health: http://127.0.0.1:8000/api/health
 - API docs: http://127.0.0.1:8000/docs
 
-## Safety boundary
-The current phase stores employee metadata and task descriptions locally. It does not yet execute arbitrary shell commands, modify arbitrary project files, access the public internet on behalf of agents, or deploy projects. Execution features will be introduced separately with scoped permissions, explicit approvals and audit logs.
+Ollama:
+- Configured model: `qwen3:4b` by default.
+- The model must be installed locally and Ollama must be running.
+- Set `OLLAMA_MODEL` or `OLLAMA_BASE_URL` in `backend/.env` to override defaults.
+
+## Phase 3 API endpoints
+- `GET /api/conversations` — list recent conversations.
+- `GET /api/conversations/{conversation_id}/messages` — retrieve stored messages.
+- `POST /api/agents/{agent_id}/chat` — send a message to one employee and receive a local-model response.
+
+Example chat request:
+```json
+{
+  "message": "Help me plan the next steps for AgentHQ.",
+  "conversation_id": null
+}
+```
+
+## Safety and privacy boundary
+The backend binds to `127.0.0.1:8000`; conversations and employee records are stored on the local machine. This phase does not execute shell commands, modify files, browse the live internet, deploy applications or autonomously complete tasks. Role prompts explicitly tell employees not to claim that they performed those actions. Later execution capabilities must use scoped permissions, explicit approvals and audit logs.

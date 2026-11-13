@@ -318,12 +318,13 @@ def list_conversation_messages(conversation_id: str, limit: int = 40) -> list[di
     safe_limit = max(1, min(int(limit), 100))
     with connect() as connection:
         rows = connection.execute(
-            """SELECT * FROM (
-                 SELECT * FROM conversation_messages
+            """SELECT id, conversation_id, role, content, created_at FROM (
+                 SELECT id, conversation_id, role, content, created_at
+                 FROM conversation_messages
                  WHERE conversation_id = ?
                  ORDER BY created_at DESC, rowid DESC
                  LIMIT ?
-               ) ORDER BY created_at ASC, rowid ASC""",
+               ) ORDER BY created_at ASC, id ASC""",
             (conversation_id, safe_limit),
         ).fetchall()
         return [dict(row) for row in rows]
