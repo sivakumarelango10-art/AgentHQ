@@ -5,6 +5,19 @@ Audit date: 2026-11-13
 
 ## Executive decision
 
+## Migration implementation status
+
+The follow-up Hermes3D-first cleanup is being applied in the AgentHQ repository:
+- the temporary `HermesOfficeView` iframe wrapper has been removed from the Vite frontend;
+- the Vite proxy routes added only for the iframe have been removed;
+- the old Vite frontend remains available as a legacy/reference app, but is no longer started by the normal launcher;
+- `start-agenthq-stack.ps1` starts AgentHQ FastAPI and the separately installed Hermes3D Studio, then opens the native Hermes3D office;
+- `start-frontend.ps1` now uses Hermes3D-first startup by default; pass `-Legacy` only to run the old Vite dashboard;
+- the canonical fresh-database employee seed now includes Kiran as the seventh employee, with a regression test.
+
+The actual Hermes3D custom-provider changes remain a separate migration task. The local `sessions.patch` change must be preserved and moved to an AgentHQ-owned Hermes3D fork/patch before any upstream update. The remaining session-history, task/Kanban, streaming and orchestration gaps below are still open.
+
+
 Use **Hermes3D as the primary application and UI**. Use **AgentHQ as the local company runtime and data service** (FastAPI, SQLite, Ollama, employee identity, conversations and eventually task orchestration).
 
 Do not keep the current AgentHQ Vite application as the product shell with Hermes3D nested inside an iframe. That was a useful connectivity proof, but it is not the requested product architecture and it creates two competing shells.
