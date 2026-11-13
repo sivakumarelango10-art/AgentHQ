@@ -205,7 +205,7 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent, quality }: 
       <planeGeometry args={[19.4, 14.0]} /><meshStandardMaterial color="#c0a887" roughness={0.72} />
     </mesh>
     <gridHelper args={[19.4, 44, '#9e8569', '#cdb99f']} position={[0, -0.045, 0]} />
-    <gridHelper args={[19.4, 11, '#b29a7c', '#b29a7c']} position={[0, -0.044, 0} />
+    <gridHelper args={[19.4, 11, '#b29a7c', '#b29a7c']} position={[0, -0.044, 0]} />
 
     {/* Back wall and glass side partitions */}
     <mesh position={[0, 1.65, -6.95]} receiveShadow castShadow><boxGeometry args={[22, 3.5, 0.25]} /><meshStandardMaterial color="#e6e5df" roughness={0.88} /></mesh>
