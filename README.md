@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="AgentHQ Logo" width="640"/>
+</p>
+
 # AgentHQ — Local AI Company Runtime
 
 AgentHQ is the local company runtime behind a Hermes3D-powered AI office. **Hermes3D is the primary application and user interface**; AgentHQ provides the employee directory, local model routing, SQLite persistence, conversations and the runtime API.

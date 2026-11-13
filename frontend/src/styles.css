@@ -51,13 +51,13 @@ h1, h2, h3, p { margin: 0; }
 .brand-row { display: flex; align-items: center; gap: 11px; padding: 0 8px 27px; }
 .brand-mark {
   width: 39px; height: 39px; flex: 0 0 auto; display: grid; place-items: center;
-  border: 1px solid rgba(216, 236, 218, .35); border-radius: 12px;
-  color: #183524; background: linear-gradient(145deg, #d7ead8, #a9c9b0);
-  box-shadow: 0 5px 18px rgba(0, 0, 0, .22);
+  border: 1px solid rgba(34, 211, 238, .35); border-radius: 12px;
+  background: #0B1020;
+  box-shadow: 0 4px 16px rgba(34, 211, 238, .18);
 }
-.brand-name { color: #f2f6f2; font-family: Segoe UI Variable, 'Segoe UI Variable', sans-serif; font-size: 21px; font-weight: 800; letter-spacing: -.9px; line-height: 1.05; }
-.brand-name span { color: #a9ceb2; }
-.brand-caption { margin-top: 5px; color: #82948a; font-size: 9px; font-weight: 700; letter-spacing: 1.7px; }
+.brand-name { color: #ffffff; font-family: 'Space Grotesk', Segoe UI Variable, 'Segoe UI Variable', sans-serif; font-size: 21px; font-weight: 700; letter-spacing: -.6px; line-height: 1.05; }
+.brand-name span { color: #22D3EE; }
+.brand-caption { margin-top: 5px; color: #A5B0CC; font-size: 8.5px; font-weight: 600; letter-spacing: 1.6px; }
 .icon-button {
   width: 36px; height: 36px; display: inline-grid; place-items: center; flex: 0 0 auto;
   border: 1px solid transparent; border-radius: 10px; color: #728278; background: transparent;

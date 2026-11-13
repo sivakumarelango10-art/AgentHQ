@@ -15,7 +15,6 @@ import {
   Plus,
   Radio,
   Settings2,
-  Sparkles,
   Users,
   Wifi,
   ListTodo,
@@ -26,6 +25,7 @@ import {
 } from 'lucide-react'
 import { OfficeScene } from './components/office/OfficeScene'
 import { ConversationsView } from './components/chat/ConversationsView'
+import { LogoIcon } from './components/brand/Logo'
 import { initialAgents } from './data'
 import { addAgent, addTask, cancelTask, getAgents, getHealth, getTasks } from './api'
 import type { Agent, AgentCreateInput, BackendHealth, Task, TaskCreateInput, TaskPriority } from './types'
@@ -127,10 +127,10 @@ function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-mark"><Sparkles size={19} /></div>
+          <div className="brand-mark"><LogoIcon size={24} /></div>
           <div>
             <div className="brand-name">Agent<span>HQ</span></div>
-            <div className="brand-caption">YOUR AI COMPANY</div>
+            <div className="brand-caption">YOUR AI TEAM, ONE COMMAND CENTER</div>
           </div>
           <button className="icon-button sidebar-collapse" aria-label="Collapse sidebar"><PanelLeftClose size={17} /></button>
         </div>
