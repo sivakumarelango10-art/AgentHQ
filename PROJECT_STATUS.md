@@ -1,6 +1,6 @@
 # AgentHQ implementation status
 
-Current version: **0.3.0 — AI Employee Conversations**
+Current version: **0.4.0 — Hermes3D Runtime Compatibility**
 
 ## Working foundations
 - React + TypeScript + Vite application shell with the premium responsive UI.
@@ -69,6 +69,14 @@ Example chat request:
   "conversation_id": null
 }
 ```
+
+## Hermes3D custom runtime integration
+- AgentHQ exposes GET /health, GET /state, GET /registry, and POST /v1/chat/completions for Hermes3D's Custom backend profile.
+- Hermes3D roster entries are generated from real SQLite employee records using stable name-derived runtime IDs.
+- The configured local Ollama model is exposed through the runtime registry.
+- Hermes3D session IDs are mapped to persistent AgentHQ conversation rows using the runtime_sessions table.
+- Chat requests are routed through the existing role-aware AgentHQ Ollama chat handler; no second agent database is created.
+- Streaming chat, Kanban task synchronization, tool approvals, files, cron and autonomous execution are not yet supported.
 
 ## Safety and privacy boundary
 The backend binds to `127.0.0.1:8000`; conversations and employee records are stored on the local machine. This phase does not execute shell commands, modify files, browse the live internet, deploy applications or autonomously complete tasks. Role prompts explicitly tell employees not to claim that they performed those actions. Later execution capabilities must use scoped permissions, explicit approvals and audit logs.
