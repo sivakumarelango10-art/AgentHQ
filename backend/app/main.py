@@ -19,6 +19,9 @@ load_dotenv()
 APP_NAME = os.getenv("APP_NAME", "AgentHQ API")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+# Qwen3 can spend its output budget on hidden reasoning without emitting a final answer.
+# Use direct-answer mode by default; set OLLAMA_THINK=true to opt back into thinking mode.
+OLLAMA_THINK = os.getenv("OLLAMA_THINK", "false").strip().casefold() == "true"
 
 
 class AgentCreate(BaseModel):
@@ -377,6 +380,24 @@ async def get_conversation_messages(conversation_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/agents/{agent_id}/chat")
+def build_ollama_chat_payload(messages: list[dict[str, str]]) -> dict[str, Any]:
+    """Build a bounded local chat request with an explicit Qwen3 thinking mode."""
+    request_payload: dict[str, Any] = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "keep_alive": "10m",
+        "options": {
+            "temperature": 0.6,
+            "num_ctx": 4096,
+            "num_predict": 700,
+        },
+    }
+    if OLLAMA_MODEL.casefold().startswith("qwen3"):
+        request_payload["think"] = OLLAMA_THINK
+    return request_payload
+
+
 async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]:
     agent = db.get_agent(agent_id)
     if agent is None:
@@ -406,25 +427,31 @@ async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
-                json={
-                    "model": OLLAMA_MODEL,
-                    "messages": ollama_messages,
-                    "stream": False,
-                    "keep_alive": "10m",
-                    "options": {
-                        "temperature": 0.6,
-                        "num_ctx": 4096,
-                        "num_predict": 700,
-                    },
-                },
+                json=build_ollama_chat_payload(ollama_messages),
             )
             response.raise_for_status()
             result = response.json()
         if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
             raise HTTPException(status_code=502, detail="Ollama returned an unexpected chat response.")
-        reply = str(result["message"].get("content", "")).strip()
+        message_result = result["message"]
+        raw_reply = message_result.get("content", "")
+        reply = raw_reply.strip() if isinstance(raw_reply, str) else ""
         if not reply:
-            raise HTTPException(status_code=502, detail="The local model returned an empty response.")
+            # Never expose the model's private reasoning field as a user-facing answer.
+            thinking_present = bool(
+                isinstance(message_result.get("thinking"), str)
+                and message_result["thinking"].strip()
+            )
+            done_reason = str(result.get("done_reason") or "unknown")[:40]
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "The local model returned no final text "
+                    f"(done_reason={done_reason}, thinking_present={thinking_present}). "
+                    "For Qwen3, direct-answer mode is enabled by default. "
+                    "Check the Ollama model and generation logs if this continues."
+                ),
+            )
         assistant_message = db.add_conversation_message(conversation_id, "assistant", reply)
         latency_ms = round((time.perf_counter() - started_at) * 1000)
         return {
@@ -456,6 +483,9 @@ async def ollama_status() -> dict[str, Any]:
         "configured_model": OLLAMA_MODEL,
         "model_found": model is not None,
         "model": model,
+        "thinking_mode": (
+            "thinking" if OLLAMA_THINK else "direct"
+        ) if OLLAMA_MODEL.casefold().startswith("qwen3") else "model-default",
     }
 
 
