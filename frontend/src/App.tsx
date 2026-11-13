@@ -22,15 +22,17 @@ import {
   X,
   UserPlus,
   Ban,
+  Box,
   RefreshCw,
 } from 'lucide-react'
 import { OfficeScene } from './components/office/OfficeScene'
 import { ConversationsView } from './components/chat/ConversationsView'
+import { HermesOfficeView } from './components/office/HermesOfficeView'
 import { initialAgents } from './data'
 import { addAgent, addTask, cancelTask, getAgents, getHealth, getTasks } from './api'
 import type { Agent, AgentCreateInput, BackendHealth, Task, TaskCreateInput, TaskPriority } from './types'
 
- type View = 'overview' | 'employees' | 'tasks' | 'conversations'
+ type View = 'overview' | 'live-office' | 'employees' | 'tasks' | 'conversations'
 
 function App() {
   const [agents, setAgents] = useState<Agent[]>(initialAgents)
@@ -172,7 +174,7 @@ function App() {
 
       <section className="main-area">
         <header className="topbar">
-          <div className="breadcrumb"><span>Workspace</span><span className="crumb-sep">/</span><strong>{activeView === 'overview' ? 'Office overview' : activeView === 'employees' ? 'Employees' : activeView === 'tasks' ? 'Tasks' : 'Conversations'}</strong></div>
+          <div className="breadcrumb"><span>Workspace</span><span className="crumb-sep">/</span><strong>{activeView === 'overview' ? 'Office overview' : activeView === 'live-office' ? 'Live Office' : activeView === 'employees' ? 'Employees' : activeView === 'tasks' ? 'Tasks' : 'Conversations'}</strong></div>
           <div className="topbar-actions">
             <div className={`connection-pill ${backend ? 'connected' : ''}`}><span className="connection-dot" />{backend ? 'Backend connected' : 'Backend offline'}</div>
             <button className="icon-button refresh-button" onClick={() => void refreshData(true)} aria-label="Refresh local data" title="Refresh local data"><RefreshCw size={15} className={isRefreshing ? 'spin' : ''} /></button>
@@ -283,6 +285,8 @@ function App() {
           )}
 
           {activeView === 'conversations' && <ConversationsView agents={agents} />}
+
+          {activeView === 'live-office' && <HermesOfficeView />}
         </div>
       </section>
 
