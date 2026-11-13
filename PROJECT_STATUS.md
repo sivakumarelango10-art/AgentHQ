@@ -1,10 +1,18 @@
 # AgentHQ implementation status
 
-Current version: **0.4.0 — Hermes3D Runtime Compatibility**
+Current version: **0.5.0 — Hermes3D-first architecture**
+
+## Product architecture decision
+
+Hermes3D is the primary user-facing application and visual foundation. AgentHQ FastAPI + SQLite + Ollama is the authoritative company runtime and data service. The older AgentHQ Vite/React application is retained as a legacy/reference dashboard during migration; it is not the normal startup target and must not be nested around Hermes3D.
+
+Daily browser entry: `http://127.0.0.1:3000/office`.
+
+Start both services with `E:\AgentHQ\start-agenthq-stack.ps1`. See `README.md` and `docs/HERMES3D_FIRST_AUDIT_AND_MIGRATION.md`.
 
 ## Working foundations
-- React + TypeScript + Vite application shell with the premium responsive UI.
-- Interactive React Three Fiber office with selectable employee figures.
+- Legacy React + TypeScript + Vite management shell and React Three Fiber office preview retained for reference during migration.
+- Hermes3D native Studio is the intended product UI; its actual 3D office, native panels and chat should be preserved rather than recreated in the Vite shell.
 - Persistent employee directory and task queue stored in local SQLite.
 - Add employee workflow with department, room and color fields.
 - Create, assign, list and cancel queued tasks.
