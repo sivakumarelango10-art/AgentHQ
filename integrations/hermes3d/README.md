@@ -1,100 +1,82 @@
-# Hermes3D evaluation and integration
+# Hermes3D — AgentHQ's primary application
 
-This folder documents how AgentHQ evaluates and integrates ideas from [Hermes3D](https://github.com/iamlukethedev/Hermes3D).
+Hermes3D is the primary UI foundation for AgentHQ. AgentHQ's FastAPI service remains the company runtime and authoritative data service (SQLite + Ollama). Keep Hermes3D's native design, office scene, employee interactions, chat, HQ panels, settings and Studio workflows. Do not recreate those experiences in the legacy AgentHQ Vite interface.
 
 ## Upstream project
 
 - Repository: https://github.com/iamlukethedev/Hermes3D
-- License: MIT (see upstream LICENSE)
-- Role: self-hosted agent office UI, visualization, Studio, and gateway/proxy layer.
-- Stack: Next.js 16, React 19, Three.js, React Three Fiber, Drei, Phaser, custom Node WebSocket proxy.
-- Backend: not included. Hermes3D connects to a running Hermes gateway, custom runtime API, or its demo gateway.
+- License: MIT (preserve upstream license and third-party notices)
+- Stack: Next.js 16, React 19, Three.js, React Three Fiber, Drei, Phaser and the Hermes3D runtime-provider layer.
+- User's working tree: `E:\Hermes3D` (separate local checkout)
+- AgentHQ runtime: `E:\AgentHQ\backend` (FastAPI, SQLite and Ollama)
 
-## Decision for AgentHQ
+## Product ownership
 
-Do not replace the AgentHQ application or FastAPI/Ollama backend with Hermes3D.
+| Area | Source of truth |
+|---|---|
+| Main application UI, office rendering, camera, interactions and Studio panels | Hermes3D |
+| Employee records, canonical roles, departments, rooms and statuses | AgentHQ SQLite |
+| Conversations and durable chat history | AgentHQ SQLite |
+| Configured model and inference | AgentHQ + Ollama |
+| Task records, assignments, execution state and audit records | AgentHQ SQLite (Kanban mapping to be completed) |
+| Visual office presentation of status/task events | Hermes3D, driven by AgentHQ runtime events |
 
-AgentHQ currently uses:
-- React + Vite + React Three Fiber for the existing premium interface and office.
-- FastAPI for local application APIs.
-- SQLite as the durable source of truth for employees, tasks, and conversations.
-- Ollama for local Qwen3 reasoning.
+There must be one employee roster, one chat history and one task board. Hermes3D must not create a parallel company database.
 
-Hermes3D is a separate full Studio application with its own Next.js server, routing, state model, visual office, backend adapter/proxy assumptions, and UI. Copying its whole repository into AgentHQ would create two application shells, competing office models, duplicated runtime state, and additional memory/CPU usage.
+## Local operation
 
-## Integration strategy
-
-Use Hermes3D as a separately installed, MIT-licensed sibling application during evaluation and as a source of upstream implementation patterns. The preferred production strategy is to adapt its 3D office renderer/presentation patterns into AgentHQ's existing React Three Fiber office, not embed the entire Next.js Studio in the Vite application.
-
-A later optional sidecar could run Hermes3D on port 3000. It must not replace the AgentHQ frontend on port 5173 or FastAPI on port 8000.
-
-## Adapter boundary required before using Hermes3D as AgentHQ's office
-
-Hermes3D's direct custom runtime seam expects:
-- GET /health
-- GET /state
-- GET /registry
-- POST /v1/chat/completions
-
-AgentHQ's current API instead has local-specific FastAPI routes for health, employees, tasks, conversations and Ollama chat. Therefore, create a dedicated AgentHQ adapter that translates these contracts. Do not rewrite or duplicate the SQLite source of truth inside Hermes3D.
-
-The adapter must:
-- Read employee and runtime state from AgentHQ FastAPI/SQLite.
-- Map employee IDs/roles/rooms/status into the Hermes3D runtime agent schema.
-- Map chat completions to the AgentHQ local Ollama chat service.
-- Return explicit unsupported capability responses for tools, approvals, sessions or files until those are implemented.
-- Expose only the loopback interface (127.0.0.1) in local development.
-- Validate requests and cap message/body sizes.
-- Never accept arbitrary upstream URLs from the browser.
-- Never proxy shell, filesystem, browser or deployment actions.
-- Keep AgentHQ's database authoritative.
-
-## Asset/source reuse rules
-
-The upstream project is MIT licensed. Preserve its copyright and license notice for any copied or modified files, and review any separately licensed assets under their own terms. Prefer small, isolated adaptations over wholesale copying.
-
-## Local Windows installation
-
-Run from a separate folder, for example E:\Hermes3D:
+From the AgentHQ repository:
 
 ```powershell
-cd E:\
-git clone https://github.com/iamlukethedev/Hermes3D.git
-cd E:\Hermes3D
-npm ci
-Copy-Item .env.example .env
-npm run dev
+cd E:\AgentHQ
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\start-agenthq-stack.ps1
 ```
 
-Open http://127.0.0.1:3000. For a visual-only evaluation, use Demo backend and run:
+This starts only the AgentHQ FastAPI runtime and Hermes3D Studio. Open:
 
-```powershell
-npm run demo-gateway
+```text
+http://127.0.0.1:3000/office
 ```
 
-This is only a demo gateway; it does not use AgentHQ data. Do not point Hermes3D at AgentHQ until the adapter is implemented and contract-tested.
+In Hermes3D choose **Custom backend** and set:
 
-## AgentHQ local services remain
+```text
+http://127.0.0.1:8000
+```
 
-- AgentHQ frontend: http://127.0.0.1:5173
-- AgentHQ FastAPI: http://127.0.0.1:8000
-- AgentHQ health: http://127.0.0.1:8000/api/health
-- Ollama: http://127.0.0.1:11434
+Leave the token empty for the local loopback-only development environment. Do not start the AgentHQ Vite application on port 5173 as the product UI.
 
-## Next integration milestones
+## Custom runtime implementation
 
-1. Run Hermes3D separately in demo mode and compare office rendering, performance, controls and UX.
-2. Document a normalized AgentHQ runtime contract (employee roster, live status, activities, messages, tasks).
-3. Implement and test a dedicated local AgentHQ-to-Hermes3D runtime adapter.
-4. Evaluate adapting selected licensed 3D components into AgentHQ's existing app so the Founder dashboard remains unified.
-5. Only after performance and functional acceptance should a user-facing renderer switch be considered.
+Current AgentHQ endpoints:
+- `GET /health`
+- `GET /state`
+- `GET /registry`
+- `POST /v1/chat/completions`
 
-## Acceptance criteria
+See [AGENTHQ_RUNTIME.md](AGENTHQ_RUNTIME.md) for the contract, setup and current limitations.
 
-- Existing AgentHQ 5173/8000/Ollama services continue working.
-- Employee and task records remain unchanged.
-- Hermes3D can be started and stopped without affecting AgentHQ.
-- Adapter contract tests pass.
-- No duplicate database or agent state is introduced.
-- No public network exposure or secrets in client storage.
-- 3D performance is measured on the RTX A2000 4GB laptop GPU before adopting heavy effects/assets.
+## Important local patch preservation
+
+A compatibility patch was previously applied in the local Hermes3D checkout to support `sessions.patch`. The upstream default branch reviewed during the audit does not contain that AgentHQ-specific change. Before updating or replacing the Hermes3D checkout:
+
+1. Run `git status --short` and `git diff` in `E:\Hermes3D`.
+2. Save the diff and identify the exact provider contract it supports.
+3. Preserve it in an AgentHQ-owned Hermes3D fork or versioned patch set.
+4. Only then update/rebase the Hermes3D source.
+
+Do not overwrite the user's local Hermes3D folder during this migration.
+
+## Migration roadmap
+
+1. Stabilize the direct Hermes3D Custom runtime connection and preserve the local provider patch.
+2. Extend the provider/AgentHQ contract for durable session listing, history reload and session updates.
+3. Expose the canonical seven-person employee metadata to Hermes3D (role, department, room, color, status and current task).
+4. Synchronize Hermes3D Kanban with AgentHQ's task records and add a verified task lifecycle.
+5. Add normalized streaming events and live presence updates.
+6. Add guarded orchestration, approvals, isolated tools and audit logs only after the previous contracts are stable.
+
+## Safety
+
+AgentHQ currently binds to loopback. Do not expose its unauthenticated development API to a LAN or public internet. Keep shell, filesystem, browser, external network and deployment capabilities disabled until scoped permissions, approval gates, sandboxing, cancellation, timeouts and audit records are implemented and tested.
