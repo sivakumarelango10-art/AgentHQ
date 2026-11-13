@@ -166,7 +166,7 @@ function App() {
           </div>
           <button className="nav-item settings-item" onClick={() => setNotice('Settings will be added in a later milestone.')}><Settings2 size={17} />Settings</button>
           <button className="nav-item" onClick={() => setNotice('See README_PHASE2.md for this milestone guide.')}><CircleHelp size={17} />Help & documentation</button>
-          <div className="version-line">AGENTHQ LOCAL <span>v0.2.0</span></div>
+          <div className="version-line">AGENTHQ LOCAL <span>v0.3.0</span></div>
         </div>
       </aside>
 
