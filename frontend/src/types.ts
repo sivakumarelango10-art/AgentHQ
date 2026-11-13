@@ -51,3 +51,31 @@ export type TaskCreateInput = {
   priority: TaskPriority
   assigned_agent_id: string | null
 }
+
+
+export type Conversation = {
+  id: string
+  agent_id: string
+  agent_name: string
+  agent_role: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export type ConversationMessage = {
+  id: string
+  conversation_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export type AgentChatResponse = {
+  conversation_id: string
+  agent: { id: string; name: string; role: string }
+  user_message: ConversationMessage
+  assistant_message: ConversationMessage
+  model: string
+  latency_ms: number
+}
