@@ -1,6 +1,6 @@
-import { Suspense } from 'react'
+import { Suspense, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { ContactShadows, Html, OrbitControls } from '@react-three/drei'
+import { ContactShadows, Environment, Html, OrbitControls, useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import type { Agent } from '../../types'
 
@@ -11,6 +11,8 @@ type Props = {
   cameraMode: 'orbit' | 'overview'
 }
 
+type Vec3 = [number, number, number]
+
 const employeePositions: Record<string, [number, number, number]> = {
   ceo: [-7.6, 0.05, -2.9],
   pm: [-4.7, 0.05, 0.05],
@@ -18,6 +20,25 @@ const employeePositions: Record<string, [number, number, number]> = {
   design: [-7.65, 0.05, 3.15],
   research: [4.7, 0.05, 0.05],
   qa: [0.55, 0.05, 3.02],
+}
+
+
+function GLBModel({ file, position, scale = 1, rotation = 0 }: { file: string; position: Vec3; scale?: number; rotation?: number }) {
+  const { scene } = useGLTF(file)
+  const clone = useMemo(() => {
+    const next = scene.clone(true)
+    next.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh) {
+        const mesh = node as THREE.Mesh
+        mesh.castShadow = true
+        mesh.receiveShadow = true
+        if (Array.isArray(mesh.material)) mesh.material = mesh.material.map((material) => material.clone())
+        else mesh.material = mesh.material.clone()
+      }
+    })
+    return next
+  }, [scene])
+  return <primitive object={clone} position={position} scale={scale} rotation={[0, rotation, 0]} />
 }
 
 function Desk({ position, width = 2.35 }: { position: [number, number, number]; width?: number }) {
@@ -180,23 +201,30 @@ function employeePosition(agent: Agent, customRoomIndex: number): [number, numbe
   return [-5.75 + column * 2.3, 0.05, 6.15 - row * 1.15]
 }
 
-function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Props, 'agents' | 'selectedAgentId' | 'onSelectAgent'>) {
+function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent, quality }: Pick<Props, 'agents' | 'selectedAgentId' | 'onSelectAgent'> & { quality: 'balanced' | 'ultra' }) {
+  const resolution = quality === 'ultra' ? 2048 : 1024
   return <>
     <color attach="background" args={['#d8d6cd']} />
     <fog attach="fog" args={['#d8d6cd', 23, 42]} />
-    <ambientLight intensity={1.25} />
-    <hemisphereLight args={['#f5f4e9', '#7a8179', 0.8]} />
-    <directionalLight position={[-7, 13, 7]} intensity={2.0} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-left={-15} shadow-camera-right={15} shadow-camera-top={15} shadow-camera-bottom={-15} />
-    <pointLight position={[1, 4.2, -3]} intensity={32} distance={12} color="#f7e4c5" />
+    <ambientLight intensity={0.72} />
+    <hemisphereLight args={['#f7f6f0', '#65766a', 0.85]} />
+    <directionalLight position={[-8, 15, 8]} intensity={2.1} castShadow shadow-mapSize={[resolution, resolution]} shadow-camera-left={-16} shadow-camera-right={16} shadow-camera-top={16} shadow-camera-bottom={-16} />
+    <directionalLight position={[8, 8, -4]} intensity={0.52} color="#dbe8ed" />
+    <pointLight position={[-4, 4.5, -2]} intensity={24} distance={15} color="#ffe8c9" />
+    <pointLight position={[4, 4, 2]} intensity={18} distance={12} color="#e1edff" />
 
     {/* Floor slab and warm timber inset */}
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.12, 0]} receiveShadow>
       <planeGeometry args={[22, 17]} /><meshStandardMaterial color="#b4b0a5" roughness={0.92} />
     </mesh>
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.055, 0]} receiveShadow>
-      <planeGeometry args={[18.8, 13.8]} /><meshStandardMaterial color="#aa9276" roughness={0.84} />
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.08, 0]} receiveShadow>
+      <planeGeometry args={[21.9, 16.2]} /><meshStandardMaterial color="#b49a7b" roughness={0.76} />
     </mesh>
-    <gridHelper args={[18.8, 38, '#a78f73', '#bda88e']} position={[0, -0.045, 0]} />
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.055, 0]}>
+      <planeGeometry args={[19.8, 14.4]} /><meshStandardMaterial color="#bfa789" roughness={0.72} />
+    </mesh>
+    <gridHelper args={[19.8, 44, '#9e8569', '#cdb99f']} position={[0, -0.045, 0]} />
+    <gridHelper args={[19.8, 11, '#b29a7c', '#b29a7c']} position={[0, -0.044, 0} />
 
     {/* Back wall and glass side partitions */}
     <mesh position={[0, 1.65, -6.95]} receiveShadow castShadow><boxGeometry args={[22, 3.5, 0.25]} /><meshStandardMaterial color="#e6e5df" roughness={0.88} /></mesh>
@@ -206,6 +234,14 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Prop
     <mesh position={[7.5, 1.55, 1.8]}><boxGeometry args={[0.07, 3, 5.1]} /><meshPhysicalMaterial color="#aac2bd" transparent opacity={0.28} roughness={0.12} transmission={0.35} /></mesh>
     <mesh position={[-7.5, 1.55, 1.8]}><boxGeometry args={[0.09, 3.12, 0.09]} /><meshStandardMaterial color="#6e7b75" metalness={0.45} roughness={0.3} /></mesh>
     <mesh position={[7.5, 1.55, 1.8]}><boxGeometry args={[0.09, 3.12, 0.09]} /><meshStandardMaterial color="#6e7b75" metalness={0.45} roughness={0.3} /></mesh>
+
+    {/* Tall modern glass partitions and perimeter window detailing */}
+    <mesh position={[0, 1.9, -7.05]} castShadow receiveShadow><boxGeometry args={[22.1, 4.0, 0.24]} /><meshStandardMaterial color="#deded7" roughness={0.88} /></mesh>
+    <mesh position={[-10.95, 1.9, 0]} castShadow receiveShadow><boxGeometry args={[0.22, 4.0, 14.2]} /><meshStandardMaterial color="#d2d7d2" roughness={0.82} /></mesh>
+    <mesh position={[10.95, 1.9, 0]} castShadow receiveShadow><boxGeometry args={[0.22, 4.0, 14.2]} /><meshStandardMaterial color="#d2d7d2" roughness={0.82} /></mesh>
+    <mesh position={[7.55, 1.78, 1.75]}><boxGeometry args={[0.055, 3.35, 5.0]} /><meshPhysicalMaterial color="#a9c3c2" transparent opacity={0.2} roughness={0.09} transmission={0.48} thickness={0.1} /></mesh>
+    <mesh position={[7.55, 1.78, 1.75]}><boxGeometry args={[0.09, 3.48, 0.09]} /><meshStandardMaterial color="#65756e" metalness={0.58} roughness={0.28} /></mesh>
+    {[-0.65, 1.75, 4.15].map((z) => <mesh key={z} position={[7.55, 1.78, z]}><boxGeometry args={[0.075, 3.4, 0.045]} /><meshStandardMaterial color="#718078" metalness={0.55} roughness={0.3} /></mesh>)}
 
     {/* Ceiling beams */}
     {[-5.5, -1.8, 1.9, 5.6].map((x) => <mesh key={x} position={[x, 3.34, -0.1]}><boxGeometry args={[0.09, 0.12, 13.3]} /><meshStandardMaterial color="#f0eee6" /></mesh>)}
@@ -235,11 +271,13 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Prop
     </group>
 
     <MeetingArea />
-    <Plant position={[-9.1, 0, -5.8]} />
-    <Plant position={[9.2, 0, -5.5]} />
-    <Plant position={[-9.3, 0, 5.6]} />
-    <Plant position={[9.1, 0, 5.3]} />
-    <Plant position={[5.8, 0, 3.7]} />
+    <GLBModel file="/office-assets/models/furniture/loungeSofa.glb" position={[-4.1, 0, 4.75]} scale={0.95} rotation={Math.PI / 2} />
+    <GLBModel file="/office-assets/models/furniture/tableRound.glb" position={[-2.1, 0, 4.9]} scale={0.62} />
+    <GLBModel file="/office-assets/models/furniture/chairModernCushion.glb" position={[-1.05, 0, 4.65]} scale={0.6} rotation={-Math.PI / 2} />
+    <GLBModel file="/office-assets/models/furniture/plantSmall1.glb" position={[-9.6, 0, -5.9]} scale={0.9} />
+    <GLBModel file="/office-assets/models/furniture/plantSmall1.glb" position={[9.55, 0, -5.8]} scale={0.9} />
+    <GLBModel file="/office-assets/models/furniture/pottedPlant.glb" position={[-9.6, 0, 5.55]} scale={0.9} />
+    <GLBModel file="/office-assets/models/furniture/pottedPlant.glb" position={[9.45, 0, 5.55]} scale={0.9} />
 
     <RoomLabel position={[-7.6, 2.75, -4.2]}>CEO OFFICE</RoomLabel>
     <RoomLabel position={[0, 2.8, -5.15]}>ENGINEERING</RoomLabel>
@@ -261,20 +299,40 @@ function OfficeEnvironment({ agents, selectedAgentId, onSelectAgent }: Pick<Prop
       })
     })()}
 
-    <ContactShadows position={[0, -0.035, 0]} opacity={0.27} scale={22} blur={2.4} far={8} resolution={512} color="#303a34" />
+    <ContactShadows position={[0, -0.035, 0]} opacity={0.32} scale={23} blur={2.2} far={8} resolution={resolution} color="#26332c" />
   </>
 }
 
 export function OfficeScene({ agents, selectedAgentId, onSelectAgent, cameraMode }: Props) {
-  return <Canvas
-    shadows
-    dpr={[1, 1.5]}
-    camera={{ position: cameraMode === 'overview' ? [0, 21, 18] : [17, 14, 17], fov: 39, near: 0.1, far: 80 }}
-    gl={{ antialias: true, powerPreference: 'high-performance' }}
-  >
-    <Suspense fallback={null}>
-      <OfficeEnvironment agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} />
-      <OrbitControls makeDefault enableDamping dampingFactor={0.08} minDistance={10} maxDistance={32} maxPolarAngle={Math.PI / 2.05} target={[0, 0.8, 0]} />
-    </Suspense>
-  </Canvas>
+  const [quality, setQuality] = useState<'balanced' | 'ultra'>('balanced')
+  const cameraPosition: [number,number,number] = cameraMode === 'overview' ? [0, 23, 20] : [17, 15.5, 17]
+  const dpr: [number,number] = quality === 'ultra' ? [1, 1.65] : [0.85, 1.2]
+  const maxDistance = quality === 'ultra' ? 34 : 30
+  return <div className="agenthq-3d-scene">
+    <div className="agenthq-scene-quality">
+      <span>RENDER QUALITY</span>
+      <button className={quality === 'balanced' ? 'active' : ''} onClick={() => setQuality('balanced')}>Balanced</button>
+      <button className={quality === 'ultra' ? 'active' : ''} onClick={() => setQuality('ultra')}>Ultra</button>
+    </div>
+    <Canvas
+      shadows
+      dpr={dpr}
+      camera={{ position: cameraPosition, fov: 36, near: 0.1, far: 90 }}
+      gl={{ antialias: true, powerPreference: 'high-performance', alpha: false }}
+      onCreated={({ gl }) => {
+        gl.outputColorSpace = THREE.SRGBColorSpace
+        gl.toneMapping = THREE.ACESFilmicToneMapping
+        gl.toneMappingExposure = 1.08
+      }}
+    >
+      <Suspense fallback={null}>
+        <OfficeEnvironment agents={agents} selectedAgentId={selectedAgentId} onSelectAgent={onSelectAgent} quality={quality} />
+        <Environment preset="city" />
+        <OrbitControls makeDefault enableDamping dampingFactor={0.075} minDistance={9.5} maxDistance={maxDistance} maxPolarAngle={Math.PI / 2.03} target={[0, 0.85, 0]} />
+      </Suspense>
+    </Canvas>
+  </div>
 }
+
+const glbPaths = ['bookcaseClosed.glb','chairDesk.glb','chairModernCushion.glb','computerScreen.glb','desk.glb','deskCorner.glb','kitchenCabinet.glb','kitchenCoffeeMachine.glb','kitchenFridgeSmall.glb','lampRoundFloor.glb','loungeDesignChair.glb','loungeSofa.glb','plantSmall1.glb','pottedPlant.glb','table.glb','tableCoffee.glb','tableRound.glb']
+glbPaths.forEach((file) => useGLTF.preload('/office-assets/models/furniture/' + file))
