@@ -110,6 +110,29 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
             CREATE INDEX IF NOT EXISTS idx_tasks_assigned_agent ON tasks(assigned_agent_id);
+
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_conversations_agent_updated
+                ON conversations(agent_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
+                ON conversation_messages(conversation_id, created_at);
             """
         )
         count = connection.execute("SELECT COUNT(*) AS total FROM agents").fetchone()["total"]
@@ -228,3 +251,106 @@ def cancel_task(task_id: str) -> dict[str, Any] | None:
             (task_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+
+def get_agent(agent_id: str) -> dict[str, Any] | None:
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def set_agent_activity(agent_id: str, status: str, current_task: str) -> None:
+    now = utc_now()
+    with connect() as connection:
+        connection.execute(
+            "UPDATE agents SET status = ?, current_task = ?, updated_at = ? WHERE id = ?",
+            (status, current_task, now, agent_id),
+        )
+
+
+def create_conversation(agent_id: str, title: str) -> dict[str, Any]:
+    now = utc_now()
+    conversation_id = str(uuid4())
+    safe_title = " ".join(title.split())[:72] or "New conversation"
+    with connect() as connection:
+        agent = connection.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        if agent is None:
+            raise ValueError("The selected employee does not exist.")
+        connection.execute(
+            """INSERT INTO conversations (id, agent_id, title, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (conversation_id, agent_id, safe_title, now, now),
+        )
+    return {
+        "id": conversation_id,
+        "agent_id": agent_id,
+        "title": safe_title,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def get_conversation(conversation_id: str) -> dict[str, Any] | None:
+    with connect() as connection:
+        row = connection.execute(
+            """SELECT conversations.*, agents.name AS agent_name, agents.role AS agent_role
+               FROM conversations JOIN agents ON agents.id = conversations.agent_id
+               WHERE conversations.id = ?""",
+            (conversation_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_conversations(limit: int = 50) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 100))
+    with connect() as connection:
+        rows = connection.execute(
+            """SELECT conversations.*, agents.name AS agent_name, agents.role AS agent_role
+               FROM conversations JOIN agents ON agents.id = conversations.agent_id
+               ORDER BY conversations.updated_at DESC LIMIT ?""",
+            (safe_limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def list_conversation_messages(conversation_id: str, limit: int = 40) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 100))
+    with connect() as connection:
+        rows = connection.execute(
+            """SELECT * FROM (
+                 SELECT * FROM conversation_messages
+                 WHERE conversation_id = ?
+                 ORDER BY created_at DESC, rowid DESC
+                 LIMIT ?
+               ) ORDER BY created_at ASC, rowid ASC""",
+            (conversation_id, safe_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def add_conversation_message(conversation_id: str, role: str, content: str) -> dict[str, Any]:
+    now = utc_now()
+    message_id = str(uuid4())
+    with connect() as connection:
+        exists = connection.execute(
+            "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        if exists is None:
+            raise ValueError("Conversation not found.")
+        connection.execute(
+            """INSERT INTO conversation_messages (id, conversation_id, role, content, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (message_id, conversation_id, role, content, now),
+        )
+        connection.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (now, conversation_id),
+        )
+    return {
+        "id": message_id,
+        "conversation_id": conversation_id,
+        "role": role,
+        "content": content,
+        "created_at": now,
+    }
