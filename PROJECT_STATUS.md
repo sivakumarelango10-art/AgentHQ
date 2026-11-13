@@ -1,6 +1,6 @@
 # AgentHQ implementation status
 
-Current version: **0.2.0**
+Current version: **0.2.0** (UI refresh)
 
 ## Working foundations
 - React + TypeScript + Vite application shell.
@@ -16,7 +16,7 @@ Current version: **0.2.0**
 - Local Qwen3 model available through Ollama.
 
 ## Current UI refinement
-The premium UI redesign is being developed on the `feature/premium-ui-redesign` branch:
+The premium UI redesign has been merged into `main`:
 - Higher-contrast typography and clearer hierarchy.
 - More consistent spacing, larger controls and accessible focus states.
 - Refined sidebar, navigation, workspace header and metric cards.
