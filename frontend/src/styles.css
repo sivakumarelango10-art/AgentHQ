@@ -1,5 +1,5 @@
 :root {
-  font-family: 'DM Sans', Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Segoe UI Variable', 'Segoe UI', Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: #18231d;
   background: #f3f6f3;
   font-synthesis: none;
@@ -55,7 +55,7 @@ h1, h2, h3, p { margin: 0; }
   color: #183524; background: linear-gradient(145deg, #d7ead8, #a9c9b0);
   box-shadow: 0 5px 18px rgba(0, 0, 0, .22);
 }
-.brand-name { color: #f2f6f2; font-family: Manrope, 'DM Sans', sans-serif; font-size: 21px; font-weight: 800; letter-spacing: -.9px; line-height: 1.05; }
+.brand-name { color: #f2f6f2; font-family: 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; font-size: 21px; font-weight: 800; letter-spacing: -.9px; line-height: 1.05; }
 .brand-name span { color: #a9ceb2; }
 .brand-caption { margin-top: 5px; color: #82948a; font-size: 9px; font-weight: 700; letter-spacing: 1.7px; }
 .icon-button {
@@ -145,7 +145,7 @@ h1, h2, h3, p { margin: 0; }
 .eyebrow { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; color: #819188; font-size: 10px; font-weight: 800; letter-spacing: 1.35px; }
 .eyebrow-line { width: 20px; height: 2px; border-radius: 99px; background: #78a887; }
 h1, h2, h3, p { margin: 0; }
-h1 { color: #1c2921; font-family: Manrope, 'DM Sans', sans-serif; font-size: clamp(27px, 2.35vw, 36px); font-weight: 800; letter-spacing: -1.25px; line-height: 1.15; }
+h1 { color: #1c2921; font-family: 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; font-size: clamp(27px, 2.35vw, 36px); font-weight: 800; letter-spacing: -1.25px; line-height: 1.15; }
 .wave { color: #c19a5d; font-size: .75em; }
 .page-heading p { margin-top: 8px; color: #718078; font-size: 14px; line-height: 1.55; }
 .primary-button {
@@ -172,13 +172,13 @@ h1 { color: #1c2921; font-family: Manrope, 'DM Sans', sans-serif; font-size: cla
 .metric-icon.blue { color: #627fa9; background: #edf2f9; }
 .metric-icon.amber { color: #a17b43; background: #f8f2e7; }
 .metric-label { color: #718078; font-size: 12px; font-weight: 600; }
-.metric-value { margin-top: 13px; color: #1f2d24; font-family: Manrope, 'DM Sans', sans-serif; font-size: 32px; line-height: 1; letter-spacing: -1px; font-weight: 800; }
+.metric-value { margin-top: 13px; color: #1f2d24; font-family: 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; font-size: 32px; line-height: 1; letter-spacing: -1px; font-weight: 800; }
 .metric-foot { margin-top: 9px; color: #96a199; font-size: 11px; line-height: 1.35; }
 
 /* 3D office workspace */
 .office-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .office-section-heading > div:first-child { display: flex; align-items: center; gap: 12px; }
-.office-section-heading h2 { color: #27362d; font-family: Manrope, 'DM Sans', sans-serif; font-size: 19px; font-weight: 800; letter-spacing: -.45px; }
+.office-section-heading h2 { color: #27362d; font-family: 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; font-size: 19px; font-weight: 800; letter-spacing: -.45px; }
 .live-tag { display: inline-flex; align-items: center; gap: 8px; padding: 5px 9px; border: 1px solid #deeadf; border-radius: 999px; color: #4e815b; background: #f0f7ef; font-size: 9px; font-weight: 800; letter-spacing: .75px; }
 .live-dot { background: #55a76d; box-shadow: 0 0 0 4px rgba(85,167,109,.12); }
 .office-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: #fff; box-shadow: var(--shadow-sm); }
@@ -209,8 +209,8 @@ h1 { color: #1c2921; font-family: Manrope, 'DM Sans', sans-serif; font-size: cla
   letter-spacing: .65px; pointer-events: none; box-shadow: 0 4px 14px rgba(31,53,38,.07);
 }
 .mouse-icon { color: #54836a; font-size: 15px; }
-.room-label { padding: 6px 9px; border: 1px solid #d4ded5; border-radius: 6px; color: #5c7062; background: rgba(250,252,248,.94); white-space: nowrap; font-family: 'DM Sans', sans-serif; font-size: 9px; font-weight: 800; letter-spacing: .8px; box-shadow: 0 2px 8px rgba(26,46,32,.08); }
-.employee-name-tag { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #d6e0d7; border-radius: 7px; color: #40564a; background: rgba(255,255,255,.96); box-shadow: 0 3px 10px rgba(28,47,34,.13); white-space: nowrap; font: 700 10px 'DM Sans', sans-serif; }
+.room-label { padding: 6px 9px; border: 1px solid #d4ded5; border-radius: 6px; color: #5c7062; background: rgba(250,252,248,.94); white-space: nowrap; font-family: 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; font-size: 9px; font-weight: 800; letter-spacing: .8px; box-shadow: 0 2px 8px rgba(26,46,32,.08); }
+.employee-name-tag { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #d6e0d7; border-radius: 7px; color: #40564a; background: rgba(255,255,255,.96); box-shadow: 0 3px 10px rgba(28,47,34,.13); white-space: nowrap; font: 700 10px 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; }
 .employee-name-tag.selected { border-color: #82af8d; color: #214d32; background: #f1f8f1; box-shadow: 0 0 0 2px rgba(80,145,91,.12), 0 4px 12px rgba(28,47,34,.12); }
 .mini-status { width: 6px; height: 6px; border-radius: 50%; background: #d3a46e; }
 .mini-status.working { background: #55a76d; }
@@ -222,7 +222,7 @@ h1 { color: #1c2921; font-family: Manrope, 'DM Sans', sans-serif; font-size: cla
   border: 1px solid var(--line); border-radius: 17px; background: #fff; box-shadow: var(--shadow-sm);
 }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 15px; border-bottom: 1px solid #edf1ed; }
-.panel-heading h3 { color: #26372c; font-family: Manrope, 'DM Sans', sans-serif; font-size: 15px; font-weight: 800; }
+.panel-heading h3 { color: #26372c; font-family: 'Segoe UI Variable', 'Segoe UI', Inter, sans-serif; font-size: 15px; font-weight: 800; }
 .panel-heading p { margin-top: 5px; color: #87948b; font-size: 11px; }
 .panel-heading .icon-button { width: 32px; height: 32px; color: #6d7b71; border-color: var(--line); }
 .panel-heading .icon-button:hover { color: var(--green-dark); background: #f2f7f2; }
@@ -319,7 +319,7 @@ h1 { color: #1c2921; font-family: Manrope, 'DM Sans', sans-serif; font-size: cla
 .toast-notice button:hover { background: rgba(38,105,57,.08); }
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px;
-  background: rgba(10, 18, 13, .78); backdrop-filter: blur(12px) saturate(.78);
+  background: rgba(10, 18, 13, .86); backdrop-filter: blur(14px) brightness(.48) saturate(.65);
   animation: overlay-in .18s ease-out;
 }
 .modal-card {
