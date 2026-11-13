@@ -146,6 +146,7 @@ function App() {
         <div className="nav-label">WORKSPACE</div>
         <nav className="main-nav">
           <button className={`nav-item ${activeView === 'overview' ? 'active' : ''}`} onClick={() => setActiveView('overview')}><LayoutDashboard size={17} />Office overview</button>
+          <button className={`nav-item ${activeView === 'live-office' ? 'active' : ''}`} onClick={() => setActiveView('live-office')}><Box size={17} />Live Office</button>
           <button className={`nav-item ${activeView === 'employees' ? 'active' : ''}`} onClick={() => setActiveView('employees')}><Users size={17} />Employees <span className="nav-count">{agents.length}</span></button>
           <button className={`nav-item ${activeView === 'tasks' ? 'active' : ''}`} onClick={() => setActiveView('tasks')}><Activity size={17} />Tasks <span className="nav-count">{queuedCount}</span></button>
           <button className={`nav-item ${activeView === 'conversations' ? 'active' : ''}`} onClick={() => setActiveView('conversations')}><MessageSquareText size={17} />Conversations</button>
