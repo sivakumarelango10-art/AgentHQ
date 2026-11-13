@@ -72,3 +72,18 @@ Example chat request:
 
 ## Safety and privacy boundary
 The backend binds to `127.0.0.1:8000`; conversations and employee records are stored on the local machine. This phase does not execute shell commands, modify files, browse the live internet, deploy applications or autonomously complete tasks. Role prompts explicitly tell employees not to claim that they performed those actions. Later execution capabilities must use scoped permissions, explicit approvals and audit logs.
+
+
+## 3D Office Rendering Refinement (Hermes3D-inspired)
+
+- Improved the React Three Fiber office environment with layered timber floor surfaces, architectural perimeter walls, glass partitions, mullions, refined lighting and a modern lounge area.
+- Added cinematic ACES tone mapping and city environment lighting.
+- Added Balanced and Ultra render-quality controls; Balanced is the default and uses reduced pixel ratio and 1024 shadow maps for laptop GPUs.
+- Preserved AgentHQ's room-aware employee positioning and existing API/database/AI logic.
+- No Hermes3D runtime, gateway, server, or agent backend has been imported. AgentHQ remains a standalone FastAPI + Ollama application.
+- Added third-party notice documenting the Hermes3D MIT-licensed inspiration.
+
+Validation required:
+- Frontend production build and TypeScript compile.
+- Browser test for camera controls, employee selection, room labels, and layout.
+- Performance check on the RTX A2000 4GB at Balanced; Ultra is optional and should be used only after measuring frame rate.
