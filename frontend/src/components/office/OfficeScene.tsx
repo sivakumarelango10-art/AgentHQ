@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useState } from 'react'
+import { Suspense, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { ContactShadows, Environment, Html, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
