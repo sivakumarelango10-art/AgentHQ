@@ -44,7 +44,7 @@ The helper starts AgentHQ FastAPI and Hermes3D if they are not already running. 
 
 ## Configure Hermes3D once
 
-Use a single canonical browser origin: `http://127.0.0.1:3000`.
+Use the existing canonical browser origin: `http://localhost:3000`.
 
 In Hermes3D's connection wizard/settings:
 1. Select **Custom backend**.
@@ -52,7 +52,7 @@ In Hermes3D's connection wizard/settings:
 3. Leave the token empty for the loopback-only development setup.
 4. Connect and verify the roster/model.
 
-Browser storage is origin-scoped. Settings saved for `localhost:3000`, `127.0.0.1:3000` and the old embedded `127.0.0.1:5173` origin are separate. Always use the canonical `127.0.0.1:3000` address after configuration.
+Browser storage is origin-scoped. Settings saved for `localhost:3000`, `127.0.0.1:3000` and the old embedded `127.0.0.1:5173` origin are separate. Continue using `http://localhost:3000` so your previously saved Hermes3D browser settings remain available.
 
 For a production-mode local Hermes3D process, add this to `E:\Hermes3D\.env` and restart Studio:
 
