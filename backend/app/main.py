@@ -8,19 +8,45 @@ from typing import Any, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import db
+from . import db, security
+from .providers import (
+    AICompletionResult,
+    AIProviderAuthError,
+    AIProviderError,
+    AIProviderMalformedResponseError,
+    AIProviderModelError,
+    AIProviderRateLimitError,
+    AIProviderServiceError,
+    AIProviderTimeoutError,
+    AIProviderUnavailableError,
+    BaseAIProvider,
+    CloudflareWorkersAIProvider,
+    OllamaProvider,
+    build_ollama_chat_payload,
+    estimate_messages_tokens,
+    get_ai_provider,
+)
 
 load_dotenv()
 
 APP_NAME = os.getenv("APP_NAME", "AgentHQ API")
+AI_PROVIDER_TYPE = os.getenv("AI_PROVIDER", "ollama").strip().casefold()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
-# Qwen3 can spend its output budget on hidden reasoning without emitting a final answer.
-# Use direct-answer mode by default; set OLLAMA_THINK=true to opt back into thinking mode.
 OLLAMA_THINK = os.getenv("OLLAMA_THINK", "false").strip().casefold() == "true"
 
 
@@ -98,49 +124,141 @@ class TaskCreate(BaseModel):
         return value.strip()
 
 
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=256)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.init_db()
     yield
 
 
-app = FastAPI(title=APP_NAME, version="0.3.0", lifespan=lifespan)
+docs_url = None if security.is_production() else "/docs"
+redoc_url = None if security.is_production() else "/redoc"
+openapi_url = None if security.is_production() else "/openapi.json"
+
+app = FastAPI(
+    title=APP_NAME,
+    version="0.4.0",
+    lifespan=lifespan,
+    docs_url=docs_url,
+    redoc_url=redoc_url,
+    openapi_url=openapi_url,
+)
+
+app.add_middleware(security.SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:3000", "http://localhost:3000"],
+    allow_origins=security.get_allowed_cors_origins(),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "Accept"],
 )
 
 
+async def get_active_ai_status() -> tuple[str, bool, str | None]:
+    """Check health and model availability for the configured AI provider."""
+    provider = get_ai_provider()
+    connected, model = await provider.health_check()
+    return provider.name, connected, model
+
+
 async def get_ollama_status() -> tuple[bool, str | None]:
-    """Check the local Ollama tags endpoint without blocking the API process."""
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.5)) as client:
-            response = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
-            response.raise_for_status()
-            payload = response.json()
-        available = [item.get("name", "") for item in payload.get("models", [])]
-        selected_model = next(
-            (name for name in available if name == OLLAMA_MODEL or name.startswith(f"{OLLAMA_MODEL}:")),
-            None,
-        )
-        return True, selected_model
-    except (httpx.HTTPError, ValueError, TypeError):
-        return False, None
+    """Legacy helper for Ollama status checks."""
+    provider = OllamaProvider()
+    return await provider.health_check()
 
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    ollama_connected, found_model = await get_ollama_status()
+    provider_name, connected, found_model = await get_active_ai_status()
+    db_mode = "postgresql" if os.getenv("DATABASE_URL") else "sqlite"
+    provider = get_ai_provider()
     return {
-        "status": "ok" if ollama_connected else "degraded",
+        "status": "ok" if connected else "degraded",
         "app": APP_NAME,
         "database": "connected",
-        "ollama_connected": ollama_connected,
-        "model": found_model or (OLLAMA_MODEL if ollama_connected else None),
+        "database_mode": db_mode,
+        "provider": provider_name,
+        "ollama_connected": connected if provider_name == "ollama" else False,
+        "model": found_model or (provider.model if connected else None),
+    }
+
+
+@app.get("/")
+async def root() -> dict[str, Any]:
+    return {"status": "ok", "app": APP_NAME, "version": "0.4.0"}
+
+
+@app.post("/api/auth/login")
+async def auth_login(payload: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
+    ip = security.resolve_client_ip(request)
+    is_limited, retry_after = security.check_login_rate_limit(ip)
+    if is_limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please wait before retrying.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    valid = security.verify_founder_credentials(payload.username, payload.password)
+    if not valid:
+        security.record_login_failure(ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid founder credentials.",
+        )
+
+    security.reset_login_rate_limit(ip)
+    token, csrf_token, _ = security.create_session(payload.username)
+    security.set_session_cookie(response, token)
+    return {
+        "ok": True,
+        "message": "Login successful.",
+        "user": {"username": payload.username, "role": "founder"},
+        "csrf_token": csrf_token,
+    }
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response) -> dict[str, Any]:
+    session = security.get_current_session(request)
+    if session:
+        security.revoke_session(session.get("session_id"))
+    security.clear_session_cookie(response)
+    return {"ok": True, "message": "Logged out successfully."}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> dict[str, Any]:
+    session = security.get_current_session(request)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated.",
+        )
+    return {
+        "authenticated": True,
+        "user": {
+            "username": session.get("username", "founder"),
+            "role": session.get("role", "founder"),
+        },
+    }
+
+
+@app.post("/api/auth/ws-ticket")
+async def auth_ws_ticket(auth: dict[str, Any] = Depends(security.require_runtime_auth)) -> dict[str, Any]:
+    username = auth.get("username", "founder")
+    ticket, ttl = security.create_ws_ticket(username)
+    return {
+        "ok": True,
+        "ticket": ticket,
+        "expires_in": ttl,
     }
 
 
@@ -175,65 +293,88 @@ def resolve_runtime_agent(runtime_id: str | None) -> dict[str, Any] | None:
 
 @app.get("/health")
 async def hermes3d_runtime_health() -> dict[str, Any]:
-    connected, model = await get_ollama_status()
+    provider_name, connected, model = await get_active_ai_status()
+    provider = get_ai_provider()
+    selected_model = model or (provider.model if connected else None)
     return {
         "ok": True,
         "status": "ok" if connected else "degraded",
         "runtime": "AgentHQ",
         "database": "connected",
-        "ollama_connected": connected,
-        "model": model or (OLLAMA_MODEL if connected else None),
+        "provider": provider_name,
+        "ollama_connected": connected if provider_name == "ollama" else False,
+        "model": selected_model,
     }
 
 
 @app.get("/state")
-async def hermes3d_runtime_state() -> dict[str, Any]:
+async def hermes3d_runtime_state(
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
     agents = get_runtime_agent_catalog()
-    connected, model = await get_ollama_status()
+    provider_name, connected, model = await get_active_ai_status()
+    provider = get_ai_provider()
+    selected_model = model or provider.model
     active = {
-        str(agent["runtime_id"]): (model or OLLAMA_MODEL)
+        str(agent["runtime_id"]): selected_model
         for agent in agents
     }
     return {
-        "profileName": "agenthq-local",
-        "registry_profile": "agenthq-local",
+        "profileName": f"agenthq-{provider_name}",
+        "registry_profile": f"agenthq-{provider_name}",
         "active": active,
         "identity": {
             "name": "AgentHQ",
             "role": "AI Company",
-            "model_id": model or OLLAMA_MODEL,
+            "model_id": selected_model,
         },
         "runtime": {
-            "name": "AgentHQ Local Runtime",
+            "name": f"AgentHQ {provider_name.title()} Runtime",
             "version": "0.4.0",
             "vendor": "AgentHQ",
             "status": "online" if connected else "degraded",
-            "active_model": model or OLLAMA_MODEL,
-            "governance": "local-only",
+            "active_model": selected_model,
+            "provider": provider_name,
+            "governance": "local-only" if provider_name == "ollama" else "cloud-managed",
         },
         "capabilities": ["agents", "sessions", "chat", "models", "agent-roles"],
     }
 
 
 @app.get("/registry")
-async def hermes3d_runtime_registry() -> dict[str, Any]:
-    connected, model = await get_ollama_status()
-    selected_model = model or OLLAMA_MODEL
+async def hermes3d_runtime_registry(
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    provider_name, connected, model = await get_active_ai_status()
+    provider = get_ai_provider()
+    selected_model = model or provider.model
     return {
-        "profile": "agenthq-local",
+        "profile": f"agenthq-{provider_name}",
         "models": {
             selected_model: {
                 "id": selected_model,
                 "name": selected_model,
-                "provider": "ollama",
+                "provider": provider_name,
                 "available": connected,
             }
         },
     }
 
 
+@app.get("/api/ai/quota")
+async def get_ai_quota(
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    """Inspect current daily neuron quota usage and remaining allowance."""
+    provider = get_ai_provider()
+    return db.get_quota_status(provider=provider.name)
+
+
 @app.post("/v1/chat/completions")
-async def hermes3d_chat_completions(payload: RuntimeChatCompletionRequest) -> dict[str, Any]:
+async def hermes3d_chat_completions(
+    payload: RuntimeChatCompletionRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
     if payload.stream:
         raise HTTPException(
             status_code=400,
@@ -273,11 +414,12 @@ async def hermes3d_chat_completions(payload: RuntimeChatCompletionRequest) -> di
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     assistant_text = str(result["assistant_message"]["content"])
+    provider = get_ai_provider()
     return {
         "id": f"chatcmpl-{result['assistant_message']['id']}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": OLLAMA_MODEL,
+        "model": result.get("model") or provider.model,
         "choices": [
             {
                 "index": 0,
@@ -297,25 +439,37 @@ async def hermes3d_chat_completions(payload: RuntimeChatCompletionRequest) -> di
 
 
 @app.get("/api/agents")
-async def get_agents() -> dict[str, Any]:
+async def get_agents(
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
     items = db.list_agents()
-    return {"items": items, "total": len(items), "mode": "sqlite"}
+    db_mode = "postgresql" if os.getenv("DATABASE_URL") else "sqlite"
+    return {"items": items, "total": len(items), "mode": db_mode}
 
 
 @app.post("/api/agents", status_code=201)
-async def post_agent(payload: AgentCreate) -> dict[str, Any]:
+async def post_agent(
+    payload: AgentCreate,
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
     record = db.create_agent(payload.model_dump())
     return {"item": record}
 
 
 @app.get("/api/tasks")
-async def get_tasks(status: Literal["queued", "cancelled"] | None = Query(default=None)) -> dict[str, Any]:
+async def get_tasks(
+    status: Literal["queued", "cancelled"] | None = Query(default=None),
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
     items = db.list_tasks(status=status)
     return {"items": items, "total": len(items)}
 
 
 @app.post("/api/tasks", status_code=201)
-async def post_task(payload: TaskCreate) -> dict[str, Any]:
+async def post_task(
+    payload: TaskCreate,
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
     try:
         record = db.create_task(payload.model_dump())
     except ValueError as error:
@@ -324,7 +478,10 @@ async def post_task(payload: TaskCreate) -> dict[str, Any]:
 
 
 @app.patch("/api/tasks/{task_id}/cancel")
-async def patch_cancel_task(task_id: str) -> dict[str, Any]:
+async def patch_cancel_task(
+    task_id: str,
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
     task = db.cancel_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found.")
@@ -371,13 +528,19 @@ def build_agent_system_prompt(agent: dict[str, Any]) -> str:
 
 
 @app.get("/api/conversations")
-async def get_conversations(limit: int = Query(default=50, ge=1, le=100)) -> dict[str, Any]:
+async def get_conversations(
+    limit: int = Query(default=50, ge=1, le=100),
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
     items = db.list_conversations(limit=limit)
     return {"items": items, "total": len(items)}
 
 
 @app.get("/api/conversations/{conversation_id}/messages")
-async def get_conversation_messages(conversation_id: str) -> dict[str, Any]:
+async def get_conversation_messages(
+    conversation_id: str,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
     conversation = db.get_conversation(conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -386,22 +549,13 @@ async def get_conversation_messages(conversation_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/agents/{agent_id}/chat")
-def build_ollama_chat_payload(messages: list[dict[str, str]]) -> dict[str, Any]:
-    """Build a bounded local chat request with an explicit Qwen3 thinking mode."""
-    request_payload: dict[str, Any] = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": False,
-        "keep_alive": "10m",
-        "options": {
-            "temperature": 0.6,
-            "num_ctx": 4096,
-            "num_predict": 700,
-        },
-    }
-    if OLLAMA_MODEL.casefold().startswith("qwen3"):
-        request_payload["think"] = OLLAMA_THINK
-    return request_payload
+async def post_agent_chat(
+    agent_id: str,
+    payload: ChatRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Execute chat with an agent via the active AI provider."""
+    return await chat_with_agent(agent_id, payload)
 
 
 def extract_user_facing_reply(raw_content: Any) -> str | None:
@@ -477,32 +631,81 @@ async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]
 
     user_message = db.add_conversation_message(conversation_id, "user", payload.message)
     history = db.list_conversation_messages(conversation_id, limit=16)
-    ollama_messages = [{"role": "system", "content": build_agent_system_prompt(agent)}]
-    ollama_messages.extend(
+    ai_messages = [{"role": "system", "content": build_agent_system_prompt(agent)}]
+    ai_messages.extend(
         {"role": item["role"], "content": item["content"]}
         for item in history
         if item["role"] in ("user", "assistant")
     )
 
-    db.set_agent_activity(agent_id, "working", f"Chatting with Founder")
+    db.set_agent_activity(agent_id, "working", "Chatting with Founder")
     started_at = time.perf_counter()
+    ai_provider = get_ai_provider()
+
+    # Reserve quota if Cloudflare
+    reservation = None
+    if ai_provider.name == "cloudflare":
+        estimated_input = estimate_messages_tokens(ai_messages)
+        try:
+            reservation = db.reserve_ai_quota(
+                provider="cloudflare",
+                model=ai_provider.model,
+                estimated_input_tokens=estimated_input,
+                max_output_tokens=700,
+            )
+        except db.QuotaExceededException as error:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Cloudflare Workers AI daily free allocation reached (8,500 neurons). Reset occurs at 00:00 UTC ({error.reset_at}).",
+                headers={"Retry-After": str(error.retry_after)},
+            ) from error
+
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0)) as client:
-            response = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json=build_ollama_chat_payload(ollama_messages),
-            )
-            response.raise_for_status()
-            result = response.json()
-            if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
-                raise HTTPException(status_code=502, detail="Ollama returned an unexpected chat response.")
-            message_result = result["message"]
-            reply = extract_user_facing_reply(message_result.get("content", ""))
+            try:
+                result = await ai_provider.chat_completion(
+                    ai_messages,
+                    temperature=0.6,
+                    max_tokens=700,
+                    client=client,
+                )
+            except AIProviderAuthError as error:
+                if reservation:
+                    db.release_ai_quota(reservation)
+                raise HTTPException(status_code=502, detail="Cloudflare Workers AI authentication failed. Please verify credentials.") from error
+            except AIProviderModelError as error:
+                if reservation:
+                    db.release_ai_quota(reservation)
+                raise HTTPException(status_code=502, detail=f"Cloudflare Workers AI model error: {error}") from error
+            except AIProviderRateLimitError as error:
+                reset_at, retry_after = db.utc_midnight_info()
+                raise HTTPException(
+                    status_code=429,
+                    detail="Cloudflare Workers AI rate limit reached. Please wait before retrying.",
+                    headers={"Retry-After": str(retry_after)},
+                ) from error
+            except AIProviderTimeoutError as error:
+                # Do not release quota on timeout (uncertain inference state)
+                raise HTTPException(status_code=504, detail="The AI model took too long to respond. Try a shorter message or a smaller model.") from error
+            except AIProviderUnavailableError as error:
+                if reservation:
+                    db.release_ai_quota(reservation)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Ollama is not reachable. Start Ollama and verify the local model is available."
+                    if ai_provider.name == "ollama"
+                    else "Cloudflare Workers AI endpoint is unreachable.",
+                ) from error
+            except AIProviderServiceError as error:
+                raise HTTPException(status_code=502, detail=f"{ai_provider.name.title()} returned an error: {error}") from error
+            except (AIProviderMalformedResponseError, ValueError, TypeError) as error:
+                raise HTTPException(status_code=502, detail=f"{ai_provider.name.title()} returned an invalid response.") from error
+
+            reply = extract_user_facing_reply(result.content)
 
             if not reply:
-                # Retry once with a strict final-answer-only system instruction.
-                # The rejected draft is never stored or returned to the client.
-                retry_messages = list(ollama_messages)
+                # Single controlled retry
+                retry_messages = list(ai_messages)
                 retry_messages[0] = {
                     "role": "system",
                     "content": (
@@ -512,37 +715,56 @@ async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]
                         "If uncertain, state the uncertainty briefly and give a concise useful answer."
                     ),
                 }
-                retry_payload = build_ollama_chat_payload(retry_messages)
-                retry_payload["options"]["temperature"] = 0.3
-                retry_payload["options"]["num_predict"] = 850
-                retry_response = await client.post(
-                    f"{OLLAMA_BASE_URL}/api/chat",
-                    json=retry_payload,
-                )
-                retry_response.raise_for_status()
-                retry_result = retry_response.json()
-                retry_message = (
-                    retry_result.get("message")
-                    if isinstance(retry_result, dict)
-                    else None
-                )
-                retry_message = retry_message if isinstance(retry_message, dict) else {}
-                reply = extract_user_facing_reply(retry_message.get("content", ""))
+
+                retry_reservation = None
+                if ai_provider.name == "cloudflare":
+                    retry_input = estimate_messages_tokens(retry_messages)
+                    try:
+                        retry_reservation = db.reserve_ai_quota(
+                            provider="cloudflare",
+                            model=ai_provider.model,
+                            estimated_input_tokens=retry_input,
+                            max_output_tokens=850,
+                        )
+                    except db.QuotaExceededException as error:
+                        if reservation:
+                            db.reconcile_ai_quota(reservation, result.prompt_tokens, result.completion_tokens)
+                        raise HTTPException(
+                            status_code=429,
+                            detail=f"Cloudflare Workers AI daily quota exceeded during retry attempt ({error.reset_at}).",
+                            headers={"Retry-After": str(error.retry_after)},
+                        ) from error
+
+                try:
+                    retry_result = await ai_provider.chat_completion(
+                        retry_messages,
+                        temperature=0.3,
+                        max_tokens=850,
+                        client=client,
+                    )
+                    if retry_reservation:
+                        db.reconcile_ai_quota(retry_reservation, retry_result.prompt_tokens, retry_result.completion_tokens)
+                    reply = extract_user_facing_reply(retry_result.content)
+                except Exception as retry_err:
+                    if retry_reservation and isinstance(retry_err, (AIProviderAuthError, AIProviderModelError, AIProviderUnavailableError)):
+                        db.release_ai_quota(retry_reservation)
+                    if reservation:
+                        db.reconcile_ai_quota(reservation, result.prompt_tokens, result.completion_tokens)
+                    raise HTTPException(status_code=502, detail=f"The AI model retry failed: {retry_err}") from retry_err
 
                 if not reply:
-                    thinking_present = bool(
-                        isinstance(retry_message.get("thinking"), str)
-                        and retry_message["thinking"].strip()
-                    )
-                    done_reason = str(retry_result.get("done_reason") or "unknown")[:40] if isinstance(retry_result, dict) else "invalid"
+                    if reservation:
+                        db.reconcile_ai_quota(reservation, result.prompt_tokens, result.completion_tokens)
                     raise HTTPException(
                         status_code=502,
-                        detail=(
-                            "The local model did not produce a clean final answer after one retry. "
-                            f"(done_reason={done_reason}, thinking_present={thinking_present}). "
-                            "The rejected draft was not saved or displayed. Please retry with a shorter prompt."
-                        ),
+                        detail="The local model did not produce a clean final answer after one retry. "
+                        if ai_provider.name == "ollama"
+                        else "The AI model did not produce a clean final answer after one retry. Please retry with a shorter prompt.",
                     )
+
+            if reservation:
+                db.reconcile_ai_quota(reservation, result.prompt_tokens, result.completion_tokens)
+
         assistant_message = db.add_conversation_message(conversation_id, "assistant", reply)
         latency_ms = round((time.perf_counter() - started_at) * 1000)
         return {
@@ -550,39 +772,44 @@ async def chat_with_agent(agent_id: str, payload: ChatRequest) -> dict[str, Any]
             "agent": {"id": agent["id"], "name": agent["name"], "role": agent["role"]},
             "user_message": user_message,
             "assistant_message": assistant_message,
-            "model": OLLAMA_MODEL,
+            "model": ai_provider.model,
             "latency_ms": latency_ms,
         }
-    except httpx.TimeoutException as error:
-        raise HTTPException(status_code=504, detail="The local AI model took too long to respond. Try a shorter message or a smaller model.") from error
-    except httpx.ConnectError as error:
-        raise HTTPException(status_code=503, detail="Ollama is not reachable. Start Ollama and verify the local model is available.") from error
-    except httpx.HTTPStatusError as error:
-        raise HTTPException(status_code=502, detail=f"Ollama returned HTTP {error.response.status_code}. Check that {OLLAMA_MODEL} is installed.") from error
-    except (ValueError, TypeError) as error:
-        raise HTTPException(status_code=502, detail="Ollama returned an invalid response.") from error
     finally:
         db.set_agent_activity(agent_id, "idle", "Available — awaiting assignment")
 
 
 @app.get("/api/ollama/status")
-async def ollama_status() -> dict[str, Any]:
-    connected, model = await get_ollama_status()
+async def ollama_status(
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    provider = OllamaProvider()
+    connected, model = await provider.health_check()
     return {
         "connected": connected,
-        "base_url": OLLAMA_BASE_URL,
-        "configured_model": OLLAMA_MODEL,
+        "base_url": provider.base_url,
+        "configured_model": provider.model,
         "model_found": model is not None,
         "model": model,
         "thinking_mode": (
-            "thinking" if OLLAMA_THINK else "direct"
-        ) if OLLAMA_MODEL.casefold().startswith("qwen3") else "model-default",
+            "thinking" if provider.think else "direct"
+        ) if provider.model.casefold().startswith("qwen3") else "model-default",
     }
 
 
 @app.websocket("/ws/office")
-async def office_socket(websocket: WebSocket) -> None:
+async def office_socket(
+    websocket: WebSocket,
+    ticket: str | None = Query(default=None),
+) -> None:
     """Local event channel; live task/agent events will be added with execution workers."""
+    if security.is_auth_enforced():
+        is_valid, reason = security.verify_and_consume_ws_ticket(ticket)
+        if not is_valid:
+            # Ticket verification failed - close before communicating
+            await websocket.close(code=4003, reason=f"WebSocket ticket rejected: {reason}")
+            return
+
     await websocket.accept()
     await websocket.send_json({"type": "connected", "message": "AgentHQ office event channel ready"})
     try:
