@@ -105,10 +105,16 @@ class RuntimeChatCompletionRequest(BaseModel):
 class TaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=120)
-    description: str = Field(default="", max_length=2500)
+    id: str | None = Field(default=None, max_length=64)
+    title: str = Field(min_length=1, max_length=255)
+    description: str = Field(default="", max_length=10000)
     priority: Literal["low", "normal", "high", "urgent"] = "normal"
+    status: str | None = Field(default=None, max_length=40)
     assigned_agent_id: str | None = Field(default=None, max_length=64)
+    due_date: str | None = Field(default=None, max_length=40)
+    scheduledFor: str | None = Field(default=None, max_length=40)
+    source: str = Field(default="hermes3d_manual", max_length=40)
+    source_event_id: str | None = Field(default=None, max_length=120)
 
     @field_validator("title")
     @classmethod
@@ -124,6 +130,42 @@ class TaskCreate(BaseModel):
         return value.strip()
 
 
+class TaskCancel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int | None = Field(default=None, ge=1)
+    note: str | None = Field(default=None, max_length=5000)
+
+
+class TaskUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=10000)
+    priority: Literal["low", "normal", "high", "urgent"] | None = None
+    status: str | None = Field(default=None, max_length=40)
+    assigned_agent_id: str | None = Field(default=None, max_length=64)
+    due_date: str | None = Field(default=None, max_length=40)
+    scheduledFor: str | None = Field(default=None, max_length=40)
+    note: str | None = Field(default=None, max_length=5000)
+    is_archived: bool | None = None
+    version: int | None = Field(default=None, ge=1)
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("Task title cannot be empty.")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def strip_description(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
 class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -131,10 +173,82 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class ValidateSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str | None = Field(default=None, max_length=1024)
+    session_id: str | None = Field(default=None, max_length=120)
+
+
+class ConsumeTicketRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ticket: str = Field(min_length=1, max_length=1024)
+
+
+class RegisterSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str = Field(min_length=1, max_length=64)
+    session_token_hash: str = Field(min_length=1, max_length=64)
+    username: str = Field(min_length=1, max_length=120)
+    role: str = Field(default="founder", max_length=32)
+    csrf_token_hash: str = Field(min_length=1, max_length=64)
+    expires_at: int
+    ip_address: str | None = Field(default=None, max_length=45)
+    user_agent: str | None = Field(default=None, max_length=255)
+
+
+class RevokeSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str = Field(min_length=1, max_length=64)
+
+
+class CheckRateLimitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ip: str = Field(min_length=1, max_length=45)
+
+
+class RecordLoginAttemptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ip: str = Field(min_length=1, max_length=45)
+    username: str | None = Field(default=None, max_length=120)
+    success: bool = False
+
+
+class RegisterTicketRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ticket_id: str = Field(min_length=1, max_length=64)
+    ticket_hash: str = Field(min_length=1, max_length=64)
+    username: str = Field(min_length=1, max_length=120)
+    expires_at: int
+
+
+# Initialize sensitive log filtering to prevent ticket/token leaks in access logs
+security.setup_security_log_filters()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    security.setup_security_log_filters()
     db.init_db()
-    yield
+
+    # Lightweight single-instance background scheduler for Render Free
+    cleanup_stop = asyncio.Event()
+
+    async def _cleanup_worker():
+        while not cleanup_stop.is_set():
+            try:
+                await asyncio.wait_for(cleanup_stop.wait(), timeout=900)
+            except asyncio.TimeoutError:
+                try:
+                    db.prune_expired_security_records()
+                except Exception:
+                    pass
+
+    worker_task = asyncio.create_task(_cleanup_worker())
+    try:
+        yield
+    finally:
+        cleanup_stop.set()
+        worker_task.cancel()
 
 
 docs_url = None if security.is_production() else "/docs"
@@ -197,8 +311,15 @@ async def root() -> dict[str, Any]:
 
 @app.post("/api/auth/login")
 async def auth_login(payload: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
+    # Opportunistically prune expired records
+    db.maybe_prune_expired_security_records(min_interval_seconds=600)
+
     ip = security.resolve_client_ip(request)
-    is_limited, retry_after = security.check_login_rate_limit(ip)
+    is_limited, is_authenticated, retry_after = db.atomic_login_attempt(
+        ip_address=ip,
+        username=payload.username,
+        credential_verifier=lambda: security.verify_founder_credentials(payload.username, payload.password),
+    )
     if is_limited:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -206,16 +327,18 @@ async def auth_login(payload: LoginRequest, request: Request, response: Response
             headers={"Retry-After": str(retry_after)},
         )
 
-    valid = security.verify_founder_credentials(payload.username, payload.password)
-    if not valid:
-        security.record_login_failure(ip)
+    if not is_authenticated:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid founder credentials.",
         )
 
-    security.reset_login_rate_limit(ip)
-    token, csrf_token, _ = security.create_session(payload.username)
+    token, csrf_token, _ = security.create_session(
+        username=payload.username,
+        role="founder",
+        ip_address=ip,
+        user_agent=request.headers.get("user-agent"),
+    )
     security.set_session_cookie(response, token)
     return {
         "ok": True,
@@ -251,8 +374,33 @@ async def auth_me(request: Request) -> dict[str, Any]:
     }
 
 
+@app.post("/api/auth/validate-session")
+async def auth_validate_session(
+    payload: ValidateSessionRequest,
+    request: Request,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Internal/Upstream RPC to authoritatively validate a session token or ID."""
+    token = payload.token or security.extract_session_token(request)
+    if token:
+        session = security.verify_session_token(token)
+        if session:
+            return {"ok": True, "valid": True, "session": session}
+        return {"ok": True, "valid": False, "reason": "Invalid, expired, or revoked session token."}
+
+    if payload.session_id:
+        record = db.get_owner_session(payload.session_id)
+        if record and not record.get("is_revoked") and record.get("expires_at", 0) > int(time.time()):
+            return {"ok": True, "valid": True, "session": record}
+        return {"ok": True, "valid": False, "reason": "Session not found, expired, or revoked."}
+
+    return {"ok": True, "valid": False, "reason": "No token or session_id provided."}
+
+
 @app.post("/api/auth/ws-ticket")
 async def auth_ws_ticket(auth: dict[str, Any] = Depends(security.require_runtime_auth)) -> dict[str, Any]:
+    # Opportunistically prune expired records
+    db.maybe_prune_expired_security_records(min_interval_seconds=600)
     username = auth.get("username", "founder")
     ticket, ttl = security.create_ws_ticket(username)
     return {
@@ -260,6 +408,103 @@ async def auth_ws_ticket(auth: dict[str, Any] = Depends(security.require_runtime
         "ticket": ticket,
         "expires_in": ttl,
     }
+
+
+@app.post("/api/auth/ws-ticket/consume")
+async def auth_consume_ws_ticket(
+    payload: ConsumeTicketRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Internal authoritative endpoint to atomically consume a single-use WebSocket ticket."""
+    is_valid, result = security.verify_and_consume_ws_ticket(payload.ticket)
+    if not is_valid:
+        safe_reason = security.redact_sensitive_string(str(result or "ticket_rejected"))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Ticket rejected: {safe_reason}",
+        )
+    return {
+        "ok": True,
+        "consumed": True,
+        "username": result,
+    }
+
+
+@app.post("/api/auth/cleanup")
+async def auth_cleanup(
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    """Prune expired security records (sessions, tickets, rate-limit logs)."""
+    pruned = db.prune_expired_security_records()
+    return {"ok": True, "pruned": pruned}
+
+
+@app.post("/api/auth/internal/register-session")
+async def auth_internal_register_session(
+    payload: RegisterSessionRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Register an active founder session from Hermes3D into the persistent database."""
+    res = db.create_owner_session(
+        session_id=payload.session_id,
+        session_token_hash=payload.session_token_hash,
+        username=payload.username,
+        role=payload.role,
+        csrf_token_hash=payload.csrf_token_hash,
+        expires_at=payload.expires_at,
+        ip_address=payload.ip_address,
+        user_agent=payload.user_agent,
+    )
+    return {"ok": True, "session_id": payload.session_id}
+
+
+@app.post("/api/auth/internal/revoke-session")
+async def auth_internal_revoke_session(
+    payload: RevokeSessionRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Revoke a session persistently in the database from upstream."""
+    revoked = db.revoke_owner_session(payload.session_id)
+    return {"ok": True, "revoked": revoked}
+
+
+@app.post("/api/auth/internal/check-rate-limit")
+async def auth_internal_check_rate_limit(
+    payload: CheckRateLimitRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Check rate limit persistently from upstream."""
+    is_limited, retry_after = db.check_login_rate_limit(payload.ip)
+    return {"ok": True, "is_limited": is_limited, "retry_after": retry_after}
+
+
+@app.post("/api/auth/internal/record-login-attempt")
+async def auth_internal_record_login_attempt(
+    payload: RecordLoginAttemptRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Record a login attempt persistently and atomically from upstream."""
+    is_limited, retry_after = db.check_and_record_login_attempt(
+        ip_address=payload.ip,
+        username=payload.username,
+        success=payload.success,
+    )
+    return {"ok": True, "is_limited": is_limited, "retry_after": retry_after}
+
+
+@app.post("/api/auth/internal/register-ticket")
+async def auth_internal_register_ticket(
+    payload: RegisterTicketRequest,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Register a ticket issued by Hermes3D into the persistent database."""
+    res = db.create_websocket_ticket(
+        ticket_id=payload.ticket_id,
+        ticket_hash=payload.ticket_hash,
+        username=payload.username,
+        expires_at=payload.expires_at,
+    )
+    return {"ok": True, "ticket_id": payload.ticket_id}
 
 
 def runtime_agent_key(name: str) -> str:
@@ -458,36 +703,130 @@ async def post_agent(
 
 @app.get("/api/tasks")
 async def get_tasks(
-    status: Literal["queued", "cancelled"] | None = Query(default=None),
+    status: str | None = Query(default=None),
+    assigned_agent_id: str | None = Query(default=None),
+    include_cancelled: bool = Query(default=True),
     auth: dict[str, Any] = Depends(security.require_runtime_auth),
 ) -> dict[str, Any]:
-    items = db.list_tasks(status=status)
+    if status is not None:
+        norm_status = db.normalize_task_status(status)
+        if norm_status not in db.VALID_TASK_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid task status filter '{status}'. Valid statuses are: {sorted(db.VALID_TASK_STATUSES)}",
+            )
+        status = norm_status
+
+    if assigned_agent_id is not None:
+        if assigned_agent_id not in db.CANONICAL_EMPLOYEE_IDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid employee filter '{assigned_agent_id}'. Valid employees are: {sorted(db.CANONICAL_EMPLOYEE_IDS)}",
+            )
+
+    items = db.list_tasks(
+        status=status,
+        assigned_agent_id=assigned_agent_id,
+        include_cancelled=include_cancelled,
+    )
     return {"items": items, "total": len(items)}
 
 
 @app.post("/api/tasks", status_code=201)
 async def post_task(
     payload: TaskCreate,
-    auth: dict[str, Any] = Depends(security.require_founder_auth),
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
 ) -> dict[str, Any]:
     try:
-        record = db.create_task(payload.model_dump())
+        actor = auth.get("username", "founder")
+        record = db.create_task(payload.model_dump(exclude_unset=True), actor=actor)
     except ValueError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
+        err_msg = str(error)
+        if "does not exist" in err_msg or "Invalid employee ID" in err_msg:
+            raise HTTPException(status_code=404, detail=err_msg) from error
+        if "already exists" in err_msg:
+            raise HTTPException(status_code=409, detail=err_msg) from error
+        raise HTTPException(status_code=400, detail=err_msg) from error
     return {"item": record}
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task_by_id(
+    task_id: str,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    task = db.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return {"item": task}
+
+
+@app.patch("/api/tasks/{task_id}")
+async def patch_task(
+    task_id: str,
+    payload: TaskUpdate,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    if payload.version is None:
+        raise HTTPException(
+            status_code=400,
+            detail="expected_version is required for task updates. Provide 'version' in request body.",
+        )
+    try:
+        actor = auth.get("username", "founder")
+        task = db.update_task(task_id, payload.model_dump(exclude_unset=True), actor=actor)
+    except ValueError as error:
+        err_msg = str(error)
+        if "does not exist" in err_msg or "Invalid employee ID" in err_msg:
+            raise HTTPException(status_code=404, detail=err_msg) from error
+        if (
+            "Invalid status transition" in err_msg
+            or "Cannot cancel" in err_msg
+            or "Cannot modify" in err_msg
+            or "Conflict: Task version mismatch" in err_msg
+        ):
+            raise HTTPException(status_code=409, detail=err_msg) from error
+        raise HTTPException(status_code=400, detail=err_msg) from error
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return {"item": task}
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def post_cancel_task(
+    task_id: str,
+    payload: TaskCancel | None = None,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    expected_version = payload.version if payload else None
+    if expected_version is None:
+        raise HTTPException(
+            status_code=400,
+            detail="expected_version is required for task cancellations. Provide 'version' in request body.",
+        )
+    try:
+        actor = auth.get("username", "founder")
+        note = payload.note if (payload and payload.note) else "Task cancelled."
+        task = db.cancel_task(task_id, actor=actor, note=note, expected_version=expected_version)
+    except ValueError as error:
+        err_msg = str(error)
+        if "does not exist" in err_msg:
+            raise HTTPException(status_code=404, detail=err_msg) from error
+        if "version mismatch" in err_msg or "Cannot cancel" in err_msg or "Conflict" in err_msg:
+            raise HTTPException(status_code=409, detail=err_msg) from error
+        raise HTTPException(status_code=400, detail=err_msg) from error
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return {"item": task}
 
 
 @app.patch("/api/tasks/{task_id}/cancel")
 async def patch_cancel_task(
     task_id: str,
-    auth: dict[str, Any] = Depends(security.require_founder_auth),
+    payload: TaskCancel | None = None,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
 ) -> dict[str, Any]:
-    task = db.cancel_task(task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found.")
-    if task.get("status") != "cancelled":
-        raise HTTPException(status_code=409, detail="Only queued tasks can be cancelled in this milestone.")
-    return {"item": task}
+    return await post_cancel_task(task_id=task_id, payload=payload, auth=auth)
 
 
 ROLE_GUIDANCE: dict[str, str] = {
@@ -807,7 +1146,8 @@ async def office_socket(
         is_valid, reason = security.verify_and_consume_ws_ticket(ticket)
         if not is_valid:
             # Ticket verification failed - close before communicating
-            await websocket.close(code=4003, reason=f"WebSocket ticket rejected: {reason}")
+            safe_reason = security.redact_sensitive_string(str(reason or "ticket_rejected"))
+            await websocket.close(code=4003, reason=f"WebSocket ticket rejected: {safe_reason}")
             return
 
     await websocket.accept()

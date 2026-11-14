@@ -4,6 +4,7 @@ import base64
 import hmac
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -16,6 +17,8 @@ import argon2
 from argon2.exceptions import VerificationError, VerifyMismatchError
 from fastapi import HTTPException, Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from . import db
 
 # --- Argon2 Password Hasher ---
 _password_hasher = argon2.PasswordHasher(
@@ -101,18 +104,19 @@ def get_allowed_cors_origins() -> list[str]:
     ]
 
 
-# --- Thread-Safe In-Memory Stores ---
+# --- Persistent Database-Backed Security State ---
 
+# Backward-compatibility shims for legacy test harnesses
 _session_lock = threading.Lock()
 _active_sessions: dict[str, dict[str, Any]] = {}
 _revoked_session_ids: set[str] = set()
 
 _ticket_lock = threading.Lock()
-_active_ws_tickets: dict[str, float] = {}  # ticket_id -> expires_at
+_active_ws_tickets: dict[str, float] = {}
 _consumed_ws_tickets: set[str] = set()
 
 _rate_limit_lock = threading.Lock()
-_login_failures: dict[str, list[float]] = {}  # ip -> list of timestamp floats
+_login_failures: dict[str, list[float]] = {}
 
 
 # --- Rate Limiting ---
@@ -130,31 +134,22 @@ def resolve_client_ip(request: Request) -> str:
 
 
 def check_login_rate_limit(ip: str) -> tuple[bool, int]:
-    """Check if an IP is locked out. Returns (is_locked, retry_after_seconds)."""
-    now = time.time()
-    with _rate_limit_lock:
-        timestamps = _login_failures.get(ip, [])
-        # Prune older than window
-        timestamps = [t for t in timestamps if now - t < LOGIN_RATE_LIMIT_WINDOW_SECONDS]
-        _login_failures[ip] = timestamps
-        if len(timestamps) >= LOGIN_MAX_FAILED_ATTEMPTS:
-            oldest = min(timestamps)
-            retry_after = max(1, int(LOGIN_RATE_LIMIT_WINDOW_SECONDS - (now - oldest)))
-            return True, retry_after
-        return False, 0
+    """Check if an IP is locked out using database-backed tracking."""
+    return db.check_login_rate_limit(
+        ip_address=ip,
+        window_seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+        max_attempts=LOGIN_MAX_FAILED_ATTEMPTS,
+    )
 
 
-def record_login_failure(ip: str) -> None:
-    now = time.time()
-    with _rate_limit_lock:
-        timestamps = _login_failures.get(ip, [])
-        timestamps.append(now)
-        _login_failures[ip] = timestamps
+def record_login_failure(ip: str, username: str | None = None) -> None:
+    """Record a failed login attempt in the database."""
+    db.record_login_attempt(ip_address=ip, username=username, success=False)
 
 
 def reset_login_rate_limit(ip: str) -> None:
-    with _rate_limit_lock:
-        _login_failures.pop(ip, None)
+    """Reset failed login attempts for an IP in the database."""
+    db.reset_login_rate_limit(ip_address=ip)
 
 
 # --- Founder Authentication ---
@@ -183,38 +178,53 @@ def _sign_payload(payload_b64: str, secret: str) -> str:
     return base64.urlsafe_b64encode(mac.digest()).decode("utf-8").rstrip("=")
 
 
-def create_session(username: str) -> tuple[str, str, dict[str, Any]]:
+def create_session(
+    username: str,
+    role: str = "founder",
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> tuple[str, str, dict[str, Any]]:
     """
-    Create a new server-side session and return:
+    Create a new database-backed session and return:
     (signed_session_cookie_token, csrf_token, session_data)
     """
     now = int(time.time())
     expires_at = now + SESSION_TTL_SECONDS
     session_id = uuid4().hex
     csrf_token = secrets.token_urlsafe(32)
+    csrf_token_hash = hashlib.sha256(csrf_token.encode("utf-8")).hexdigest()
 
     data = {
         "session_id": session_id,
         "username": username,
-        "role": "founder",
+        "role": role,
         "created_at": now,
         "expires_at": expires_at,
         "csrf_token": csrf_token,
     }
 
-    with _session_lock:
-        _active_sessions[session_id] = data
-
     payload_json = json.dumps(data, separators=(",", ":"))
     payload_b64 = base64.urlsafe_b64encode(payload_json.encode("utf-8")).decode("utf-8").rstrip("=")
     signature = _sign_payload(payload_b64, get_session_secret())
     signed_token = f"{payload_b64}.{signature}"
+    session_token_hash = hashlib.sha256(signed_token.encode("utf-8")).hexdigest()
+
+    db.create_owner_session(
+        session_id=session_id,
+        session_token_hash=session_token_hash,
+        username=username,
+        role=role,
+        csrf_token_hash=csrf_token_hash,
+        expires_at=expires_at,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
 
     return signed_token, csrf_token, data
 
 
 def verify_session_token(token: str | None) -> dict[str, Any] | None:
-    """Verify token signature, expiration, and server-side validity."""
+    """Verify token signature, expiration, and database validity."""
     if not token or "." not in token:
         return None
 
@@ -246,29 +256,39 @@ def verify_session_token(token: str | None) -> dict[str, Any] | None:
     if now > expires_at:
         return None
 
-    with _session_lock:
-        if session_id in _revoked_session_ids:
+    # Authoritative check against persistent database
+    record = db.get_owner_session(session_id)
+    if not record:
+        return None
+    if record.get("is_revoked"):
+        return None
+    if record.get("expires_at", 0) < now:
+        return None
+
+    # Verify CSRF token hash match
+    csrf_token = data.get("csrf_token")
+    stored_csrf_hash = record.get("csrf_token_hash")
+    if csrf_token and stored_csrf_hash:
+        computed_hash = hashlib.sha256(csrf_token.encode("utf-8")).hexdigest()
+        if not secrets.compare_digest(computed_hash, stored_csrf_hash):
             return None
-        # Check active sessions store if present
-        if session_id in _active_sessions:
-            return _active_sessions[session_id]
 
     return data
 
 
-def revoke_session(session_id: str | None) -> None:
+def revoke_session(session_id: str | None) -> bool:
+    """Revoke a session persistently in the database."""
     if not session_id:
-        return
-    with _session_lock:
-        _revoked_session_ids.add(session_id)
-        _active_sessions.pop(session_id, None)
+        return False
+    return db.revoke_owner_session(session_id)
 
 
 # --- WebSocket Ticket Security ---
 
 def create_ws_ticket(username: str) -> tuple[str, int]:
     """
-    Generate a signed, short-lived single-use ticket for WebSocket connections.
+    Generate a signed, short-lived single-use ticket for WebSocket connections,
+    persisting its SHA-256 hash in the database.
     Returns (ticket_string, ttl_seconds).
     """
     now = int(time.time())
@@ -286,15 +306,21 @@ def create_ws_ticket(username: str) -> tuple[str, int]:
     signature = _sign_payload(payload_b64, get_session_secret())
     ticket = f"{payload_b64}.{signature}"
 
-    with _ticket_lock:
-        _active_ws_tickets[ticket_id] = expires_at
+    ticket_hash = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+    db.create_websocket_ticket(
+        ticket_id=ticket_id,
+        ticket_hash=ticket_hash,
+        username=username,
+        expires_at=expires_at,
+    )
 
     return ticket, WS_TICKET_TTL_SECONDS
 
 
 def verify_and_consume_ws_ticket(ticket: str | None) -> tuple[bool, str | None]:
     """
-    Verify ticket signature, expiration, and enforce single-use replay protection.
+    Verify ticket signature, expiration, and enforce atomic single-use replay protection
+    directly in the database.
     Returns (is_valid, username_or_reason).
     """
     if not ticket or "." not in ticket:
@@ -320,25 +346,18 @@ def verify_and_consume_ws_ticket(ticket: str | None) -> tuple[bool, str | None]:
     if not isinstance(data, dict):
         return False, "Invalid ticket format"
 
-    ticket_id = data.get("ticket_id")
     expires_at = data.get("expires_at", 0)
-    username = data.get("username", "founder")
     now = int(time.time())
 
     if now > expires_at:
         return False, "Ticket expired"
 
-    with _ticket_lock:
-        if ticket_id in _consumed_ws_tickets:
-            return False, "Ticket already used"
-        if ticket_id not in _active_ws_tickets:
-            return False, "Ticket not found or already consumed"
+    ticket_hash = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+    success, username, reason = db.consume_websocket_ticket(ticket_hash)
+    if not success:
+        return False, reason or "Ticket verification failed"
 
-        # Consume ticket
-        _active_ws_tickets.pop(ticket_id, None)
-        _consumed_ws_tickets.add(ticket_id)
-
-    return True, username
+    return True, username or data.get("username", "founder")
 
 
 # --- Cookie Helpers ---
@@ -505,4 +524,48 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         return response
+
+
+# --- Log Redaction for Sensitive Tickets and Tokens ---
+
+class SensitiveParamLogFilter(logging.Filter):
+    """Redacts raw tickets, tokens, and authorization credentials from log records."""
+    TICKET_PATTERN = re.compile(r"([?&]ticket=)[^& \t\n\r\"']+", re.IGNORECASE)
+    TOKEN_PATTERN = re.compile(r"([?&]token=)[^& \t\n\r\"']+", re.IGNORECASE)
+    BEARER_PATTERN = re.compile(r"(Bearer\s+)[A-Za-z0-9_\-\.]{8,}", re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args and isinstance(record.args, tuple):
+            new_args = []
+            for arg in record.args:
+                if isinstance(arg, str):
+                    arg = self.TICKET_PATTERN.sub(r"\1[REDACTED]", arg)
+                    arg = self.TOKEN_PATTERN.sub(r"\1[REDACTED]", arg)
+                    arg = self.BEARER_PATTERN.sub(r"\1[REDACTED]", arg)
+                new_args.append(arg)
+            record.args = tuple(new_args)
+        if isinstance(record.msg, str):
+            record.msg = self.TICKET_PATTERN.sub(r"\1[REDACTED]", record.msg)
+            record.msg = self.TOKEN_PATTERN.sub(r"\1[REDACTED]", record.msg)
+            record.msg = self.BEARER_PATTERN.sub(r"\1[REDACTED]", record.msg)
+        return True
+
+
+def redact_sensitive_string(val: str) -> str:
+    """Helper to redact ticket, token, or session secrets from messages and error details."""
+    if not val:
+        return val
+    val = re.sub(r"([?&]ticket=)[^& \t\n\r\"']+", r"\1[REDACTED]", val, flags=re.IGNORECASE)
+    val = re.sub(r"([?&]token=)[^& \t\n\r\"']+", r"\1[REDACTED]", val, flags=re.IGNORECASE)
+    val = re.sub(r"(Bearer\s+)[A-Za-z0-9_\-\.]{8,}", r"\1[REDACTED]", val, flags=re.IGNORECASE)
+    return val
+
+
+def setup_security_log_filters() -> None:
+    """Attach the sensitive log filter to standard logging handlers."""
+    filter_instance = SensitiveParamLogFilter()
+    for name in ("", "uvicorn", "uvicorn.access", "uvicorn.error", "fastapi"):
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, SensitiveParamLogFilter) for f in lg.filters):
+            lg.addFilter(filter_instance)
 

@@ -83,6 +83,35 @@ Strict-Transport-Security: max-age=31536000; includeSubDomains (Production only)
 ```
 *Note*: The Content-Security-Policy is tuned to support Three.js WebGL canvas rendering, shaders, dynamic texture loading, and audio context while denying embedding and unapproved origins.
 
+### 3.3 Database-Backed Persistent Security State (Phase 2D.1)
+All security-critical state previously managed in volatile process memory has been migrated into the persistent database layer (Neon PostgreSQL in production / SQLite with WAL locally via Alembic migration `0003_persistent_security_state`):
+
+1. **`owner_sessions`**:
+   - Stores session lifecycle state across server restarts, crashes, and multi-process worker pools.
+   - Raw cookies and tokens are **never** stored in the database. Instead, cryptographically secure SHA-256 hashes (`session_token_hash`, `csrf_token_hash`) are persisted.
+   - Explicit `is_revoked` boolean flag guarantees instantaneous, cluster-wide session revocation upon logout.
+   - Client metadata (hashed user-agent, IP, last activity, expiry timestamps) provides full auditability.
+
+2. **`login_attempts`**:
+   - Replaces in-memory brute-force dictionaries with atomic, transactional rate limit accounting.
+   - Tracks failed attempts by client IP and normalized username within a sliding window (default: 60 seconds).
+   - Enforces persistent lockout thresholds (5 failed attempts trigger HTTP 429 `Too Many Requests`) that survive process restarts.
+   - Successfully validated logins atomically clear previous failed attempts via `reset_login_rate_limit`.
+
+3. **`websocket_tickets`**:
+   - Ephemeral connection tickets are hashed via SHA-256 (`ticket_hash`) upon generation (`POST /api/auth/ws-ticket`).
+   - Ticket consumption is strictly atomic and single-use: verified via SQL `UPDATE ... WHERE is_consumed = FALSE AND expires_at >= :now RETURNING id` (with fallback rowcount checks for older SQLite runtimes).
+   - Once consumed, subsequent connection attempts with the same ticket fail closed immediately with HTTP 403 Forbidden.
+
+### 3.4 Inter-Tier RPC Coordination (Hermes3D & AgentHQ)
+Hermes3D and AgentHQ coordinate state authoritatively via internal authenticated RPC endpoints:
+
+- **Authentication Protocol**: All Hermes3D-to-AgentHQ internal calls require `Authorization: Bearer <RUNTIME_API_TOKEN>`.
+- **Session Validation & Verification**: Hermes3D verifies the HMAC signature locally using `SESSION_SECRET` for low-latency rejection of malformed tokens, followed by authoritative verification against AgentHQ (`POST /api/auth/validate-session` or database lookup) to check `is_revoked` status.
+- **WebSocket Ticket Coordination**: Hermes3D calls AgentHQ's `POST /api/auth/ws-ticket/consume` during the WebSocket HTTP upgrade handshake (`allowUpgrade`). If the ticket is invalid, expired, or already consumed, the handshake is aborted with HTTP 403.
+- **Fail-Closed Design**: If AgentHQ is unreachable or `RUNTIME_API_TOKEN` is invalid/missing, Hermes3D fails closed, rejecting untrusted access.
+- **Automatic Pruning**: Expired records across `owner_sessions`, `login_attempts`, and `websocket_tickets` are automatically pruned on maintenance sweeps and explicit administrative invocations (`POST /api/auth/cleanup`).
+
 ---
 
 ## 4. Centralized Privileged Access Control

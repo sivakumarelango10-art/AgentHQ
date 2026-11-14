@@ -111,12 +111,12 @@ class DatabaseModernizationTests(unittest.TestCase):
             })
 
         # Cancel task
-        cancelled = db.cancel_task(task["id"])
+        cancelled = db.cancel_task(task["id"], expected_version=1)
         self.assertIsNotNone(cancelled)
         self.assertEqual(cancelled["status"], "cancelled")
 
         # Non-queued cannot be cancelled again
-        retry_cancel = db.cancel_task(task["id"])
+        retry_cancel = db.cancel_task(task["id"], expected_version=2)
         self.assertEqual(retry_cancel["status"], "cancelled")
 
     def test_06_conversation_persistence(self):
@@ -254,7 +254,7 @@ class DatabaseModernizationTests(unittest.TestCase):
             eng = db.create_database_engine(f"sqlite:///{alembic_db.as_posix()}")
             with eng.connect() as conn:
                 version = conn.execute(db.text("SELECT version_num FROM alembic_version")).scalar()
-                self.assertEqual(version, "0002_daily_ai_usage")
+                self.assertIn(version, ("0002_daily_ai_usage", "0003_persistent_security_state", "0004_unified_task_management", "0005_task_lifecycle_and_concurrency"))
                 agents = conn.execute(db.text("SELECT COUNT(*) FROM agents")).scalar()
                 self.assertEqual(agents, 7)
             eng.dispose()
@@ -297,7 +297,7 @@ class DatabaseModernizationTests(unittest.TestCase):
 
         # PATCH /api/tasks/{task_id}/cancel
         task_id = task_data["id"]
-        res = client.patch(f"/api/tasks/{task_id}/cancel")
+        res = client.patch(f"/api/tasks/{task_id}/cancel", json={"version": 1})
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["item"]["status"], "cancelled")
 

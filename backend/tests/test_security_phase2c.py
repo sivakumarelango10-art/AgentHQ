@@ -23,6 +23,11 @@ TEST_SESSION_SECRET = "test-session-secret-phase2c-must-be-32-bytes-long!"
 class SecurityPhase2CTests(unittest.TestCase):
     def setUp(self):
         db.init_db()
+        with db.get_session() as session:
+            session.execute(db.delete(db.OwnerSession))
+            session.execute(db.delete(db.LoginAttempt))
+            session.execute(db.delete(db.WebSocketTicket))
+
         # Reset security in-memory stores between tests
         with security._session_lock:
             security._active_sessions.clear()
