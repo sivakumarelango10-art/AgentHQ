@@ -1,0 +1,4 @@
+[submodule "hermes3d"]
+	path = hermes3d
+	url = https://github.com/sivakumarelango10-art/Hermes3D.git
+	branch = feature/cloud-readiness

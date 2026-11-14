@@ -38,6 +38,18 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    connection = config.attributes.get("connection", None)
+    if connection is not None:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True,
+            version_num_length=64,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     url = get_database_url()
     connectable = create_database_engine(url)
 

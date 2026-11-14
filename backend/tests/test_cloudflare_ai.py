@@ -45,6 +45,7 @@ class CloudflareWorkersAITests(unittest.IsolatedAsyncioTestCase):
         self.env_patch = patch.dict(
             os.environ,
             {
+                "DATABASE_URL": "",
                 "AGENTHQ_DB_PATH": str(self.db_path),
                 "AI_PROVIDER": "cloudflare",
                 "CLOUDFLARE_ACCOUNT_ID": "mock-account-12345",

@@ -16,7 +16,7 @@ class DatabaseModernizationTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "modernization-test.db"
-        self.env_patch = patch.dict(os.environ, {"AGENTHQ_DB_PATH": str(self.db_path)})
+        self.env_patch = patch.dict(os.environ, {"AGENTHQ_DB_PATH": str(self.db_path), "DATABASE_URL": ""})
         self.env_patch.start()
         db.reset_engine()
 
@@ -241,7 +241,7 @@ class DatabaseModernizationTests(unittest.TestCase):
         """11. Verify Alembic migrations apply cleanly and track version."""
         # Use an isolated fresh database file for alembic
         alembic_db = Path(self.temp_dir.name) / "alembic-check.db"
-        with patch.dict(os.environ, {"AGENTHQ_DB_PATH": str(alembic_db)}):
+        with patch.dict(os.environ, {"AGENTHQ_DB_PATH": str(alembic_db), "DATABASE_URL": ""}):
             db.reset_engine()
             backend_dir = Path(__file__).resolve().parents[1]
             ini_path = backend_dir / "alembic.ini"

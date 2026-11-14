@@ -378,7 +378,7 @@ class PostgreSQLQuotaConcurrencyTests(unittest.TestCase):
 
     def test_pg_05_process_interruption_retains_reservations(self):
         """PG-5: Process interruption retains committed reservations in PostgreSQL."""
-        results = self._run_pg_workers(num_procs=2, reservations_per_proc=1, crash_after=True)
+        results = self._run_pg_workers(num_procs=2, reservations_per_proc=1, crash_after=True, limit=50000.0)
         for code, out, err in results:
             self.assertEqual(code, 42)
 

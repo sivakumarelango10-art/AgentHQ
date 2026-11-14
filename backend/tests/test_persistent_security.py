@@ -26,6 +26,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -45,15 +46,13 @@ TEST_SESSION_SECRET = "test-session-secret-phase2d1-must-be-32-bytes!"
 
 class PersistentSecurityPhase2D1Tests(unittest.TestCase):
     def setUp(self):
-        db.init_db()
-        with db.get_session() as session:
-            session.execute(db.delete(db.OwnerSession))
-            session.execute(db.delete(db.LoginAttempt))
-            session.execute(db.delete(db.WebSocketTicket))
-
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "security-test.db"
         self.env_patcher = patch.dict(
             os.environ,
             {
+                "DATABASE_URL": "",
+                "AGENTHQ_DB_PATH": str(self.db_path),
                 "STUDIO_USERNAME": TEST_USERNAME,
                 "STUDIO_PASSWORD_HASH": TEST_PASSWORD_HASH,
                 "RUNTIME_API_TOKEN": TEST_RUNTIME_TOKEN,
@@ -64,10 +63,19 @@ class PersistentSecurityPhase2D1Tests(unittest.TestCase):
             },
         )
         self.env_patcher.start()
+        db.reset_engine()
+        db.init_db()
+        with db.get_session() as session:
+            session.execute(db.delete(db.OwnerSession))
+            session.execute(db.delete(db.LoginAttempt))
+            session.execute(db.delete(db.WebSocketTicket))
+
         self.client = TestClient(app)
 
     def tearDown(self):
+        db.reset_engine()
         self.env_patcher.stop()
+        self.temp_dir.cleanup()
 
     def test_01_session_persistence_after_process_restart(self):
         """1. Founder session persists in database and remains valid across process restarts."""
