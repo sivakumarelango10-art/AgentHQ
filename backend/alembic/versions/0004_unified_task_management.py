@@ -24,6 +24,20 @@ def upgrade() -> None:
     inspector = sa.inspect(conn)
     existing_tables = set(inspector.get_table_names())
 
+    if conn.dialect.name == "postgresql":
+        op.execute(sa.text("ALTER TABLE tasks DROP CONSTRAINT IF EXISTS check_task_status;"))
+        op.execute(sa.text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'check_task_status_v2'
+                ) THEN
+                    ALTER TABLE tasks ADD CONSTRAINT check_task_status_v2
+                    CHECK (status IN ('inbox', 'queued', 'scheduled', 'working', 'needs_attention', 'done', 'cancelled'));
+                END IF;
+            END $$;
+        """))
+
     # 1. Update tasks table with extended fields if not already present
     if "tasks" in existing_tables:
         existing_cols = {col["name"] for col in inspector.get_columns("tasks")}

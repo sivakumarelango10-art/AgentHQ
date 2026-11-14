@@ -816,9 +816,9 @@ def reserve_ai_quota(
                             id, usage_date, provider, daily_limit_neurons,
                             estimated_neurons, request_count, created_at, updated_at
                         ) VALUES (
-                            :id, :usage_date, :provider, :limit,
-                            (SELECT COALESCE(SUM(estimated_neurons), 0.0) FROM daily_ai_usage WHERE usage_date = :usage_date AND provider = :provider),
-                            (SELECT COALESCE(SUM(request_count), 0) FROM daily_ai_usage WHERE usage_date = :usage_date AND provider = :provider),
+                            :id, CAST(:usage_date AS VARCHAR), CAST(:provider AS VARCHAR), :limit,
+                            (SELECT COALESCE(SUM(estimated_neurons), 0.0) FROM daily_ai_usage WHERE usage_date = CAST(:usage_date AS VARCHAR) AND provider = CAST(:provider AS VARCHAR)),
+                            (SELECT COALESCE(SUM(request_count), 0) FROM daily_ai_usage WHERE usage_date = CAST(:usage_date AS VARCHAR) AND provider = CAST(:provider AS VARCHAR)),
                             :created_at, :updated_at
                         )
                         ON CONFLICT (usage_date, provider) DO NOTHING
@@ -1199,6 +1199,21 @@ def init_db(engine: Engine | None = None) -> None:
             if "idx_tasks_cancelled_at" not in existing_indexes:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tasks_cancelled_at ON tasks(cancelled_at)"))
             conn.commit()
+
+            if eng.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE tasks DROP CONSTRAINT IF EXISTS check_task_status;"))
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint WHERE conname = 'check_task_status_v2'
+                        ) THEN
+                            ALTER TABLE tasks ADD CONSTRAINT check_task_status_v2
+                            CHECK (status IN ('inbox', 'queued', 'scheduled', 'working', 'needs_attention', 'done', 'cancelled'));
+                        END IF;
+                    END $$;
+                """))
+                conn.commit()
 
             # For SQLite, check if the old status constraint ('queued', 'cancelled') needs updating
             if eng.dialect.name == "sqlite":
@@ -1973,27 +1988,29 @@ def check_and_record_login_attempt(
             failed_count = (res[0] if res else 0) or 0
             oldest_attempt = (res[1] if res else window_start) or window_start
 
+            if success:
+                conn.execute(text("DELETE FROM login_attempts WHERE ip_address = :ip"), {"ip": ip_address})
+                conn.execute(text("COMMIT"))
+                return False, 0
+
             if failed_count >= max_attempts:
                 retry_after = max(1, int(window_seconds - (now_epoch - oldest_attempt)))
                 conn.execute(text("COMMIT"))
                 return True, retry_after
 
-            if success:
-                conn.execute(text("DELETE FROM login_attempts WHERE ip_address = :ip"), {"ip": ip_address})
-            else:
-                conn.execute(
-                    text("""
-                        INSERT INTO login_attempts (id, ip_address, username, attempt_time, success, created_at)
-                        VALUES (:id, :ip, :username, :attempt_time, false, :created_at)
-                    """),
-                    {
-                        "id": attempt_id,
-                        "ip": ip_address,
-                        "username": username,
-                        "attempt_time": now_epoch,
-                        "created_at": now_iso,
-                    },
-                )
+            conn.execute(
+                text("""
+                    INSERT INTO login_attempts (id, ip_address, username, attempt_time, success, created_at)
+                    VALUES (:id, :ip, :username, :attempt_time, false, :created_at)
+                """),
+                {
+                    "id": attempt_id,
+                    "ip": ip_address,
+                    "username": username,
+                    "attempt_time": now_epoch,
+                    "created_at": now_iso,
+                },
+            )
             conn.execute(text("COMMIT"))
             return False, 0
         except Exception:
