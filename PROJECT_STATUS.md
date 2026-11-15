@@ -4,8 +4,8 @@ Current release: **0.5.0 — Hermes3D-first, founder-approved task delivery**
 
 Last verified production deployment: **2026-11-15**  
 Render service: [agenthq-hermes3d](https://agenthq-hermes3d.onrender.com)  
-Deployed AgentHQ commit: `4ab37a24911ce55574e61970b8078b4c89b089bf`  
-Pinned Hermes3D commit: `ca3ba1d02fa0d0bfa2e5e249c54f58c1197bb0b1`
+Deployed AgentHQ commit: `d8ce0f2c684439ed4e2b04b6894b35cac9973171`  
+Pinned Hermes3D commit: `531bd1051dd164559b27ba6325e9b9b38cb1f68e`
 
 ## Architecture
 
@@ -45,7 +45,12 @@ Pinned Hermes3D commit: `ca3ba1d02fa0d0bfa2e5e249c54f58c1197bb0b1`
 - The Studio shows the resulting validated GitHub pull-request link.
 - AgentHQ does not merge that PR, modify the target repository's default branch directly, or deploy the target project.
 
-- **Phase 4D — worker recovery and founder retries** is merged into `feature/cloud-readiness` and `main`, with the Studio retry UI pinned to Hermes3D commit `531bd1051dd164559b27ba6325e9b9b38cb1f68e`. Worker leases and heartbeats detect interrupted executions; stale attempts become failed and move the task to `needs_attention`. A founder can retry failed/rejected attempts with revised instructions; retry creates a new linked history record and is capped at five attempts per task. There is no automatic retry loop.
+### Phase 4D — worker recovery and founder retries
+
+- Worker leases and heartbeats detect interrupted executions; stale attempts become failed and move the task to `needs_attention`.
+- A founder can retry failed/rejected attempts with revised instructions; each retry creates a new linked history record, retains prior errors, and is capped at five attempts per task.
+- Hermes3D displays attempt number, retry lineage, and an explicit retry action for failed/rejected work.
+- There is no automatic retry loop. Each retry requires a founder action.
 
 ## Key API routes
 
@@ -90,9 +95,13 @@ Keep object storage private and scope its credentials to the required bucket/pre
 - AgentHQ PR #24 CI: frontend typecheck/build, backend syntax and exact Hermes3D git-submodule pin checks passed.
 - AgentHQ PR #26: 172 backend tests passed; 36 environment-dependent PostgreSQL/external-credential tests were skipped. Worker recovery, heartbeat, retry lineage, duplicate prevention, and five-attempt cap tests passed.
 - Hermes3D PR #4: typecheck, unit tests and Next.js production build passed for the founder retry controls.
+- AgentHQ PR #28: backend tests/syntax, frontend typecheck/build and exact Hermes3D retry-UI pin checks passed.
+- AgentHQ PR #26: 172 backend tests passed; 36 environment-dependent PostgreSQL/external-credential tests were skipped. Worker recovery, heartbeat, retry lineage, duplicate prevention, and five-attempt cap tests passed.
+- Hermes3D PR #4: typecheck, unit tests and Next.js production build passed for the founder retry controls.
 - AgentHQ PR #28: backend tests/syntax, frontend typecheck/build and the exact Hermes3D retry-UI pin checks passed.
 - AgentHQ PR #25 synchronized the completed Phase 4B/4C branch into `main`; its CI passed.
-- Render deployment for commit `4ab37a2` completed successfully and is marked live.
+- Render deployment for commit `d8ce0f2` completed successfully and is marked live.
+- Render startup logs confirm Alembic migrations completed successfully, AgentHQ `/health` returned HTTP 200, Hermes3D health readiness succeeded, and the unified stack reported live/ready.
 - Render startup logs confirm production database validation, successful Alembic migrations, AgentHQ `/health` returning HTTP 200, Hermes3D `/api/health` readiness, and the unified stack reporting ready.
 
 ## Remaining production acceptance tests
