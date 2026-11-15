@@ -144,6 +144,16 @@ class TaskExecutionCreate(BaseModel):
         return value.strip()
 
 
+class TaskExecutionRetry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instructions: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("instructions")
+    @classmethod
+    def strip_retry_instructions(cls, value: str | None) -> str | None:
+        return value.strip() if value is not None else None
+
+
 class TaskExecutionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     note: str = Field(default="", max_length=5000)
@@ -882,6 +892,30 @@ async def post_task_execution(
     return {"item": item, "message": "Execution queued. Draft deliverables require founder approval."}
 
 
+@app.post("/api/task-executions/{execution_id}/retry", status_code=202)
+async def post_task_execution_retry(
+    execution_id: str,
+    payload: TaskExecutionRetry,
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    """Queue a new, auditable attempt from a failed or rejected execution."""
+    try:
+        item = db.retry_task_execution(
+            execution_id,
+            instructions=payload.instructions,
+            actor=auth.get("username", "founder"),
+            max_attempts=5,
+        )
+    except ValueError as error:
+        message = str(error)
+        code = 404 if message == "Execution not found." else 409
+        raise HTTPException(status_code=code, detail=message) from error
+    return {
+        "item": item,
+        "message": f"Retry attempt {item['attempt_number']} queued. Previous attempts remain in execution history.",
+    }
+
+
 @app.get("/api/tasks/{task_id}/executions")
 async def get_task_executions(
     task_id: str,
@@ -1390,26 +1424,66 @@ async def process_task_execution(execution_item: dict[str, Any]) -> None:
         "Prepare draft deliverables for this AgentHQ task.\n"
         f"Title: {task['title']}\n"
         f"Description: {str(task.get('description') or '')[:1200]}\n"
-        f"Founder instructions: {str(execution_item.get('instructions') or '')[:1200]}\n"
+        f"Founder instructions: {str(execution_item.get('instructions') or '')[:2400]}\n"
         "Return the required JSON object. Do not say you executed code or tests."
     )
+    lease_seconds = max(60, min(int(os.getenv("AGENTHQ_EXECUTION_LEASE_SECONDS", "300")), 900))
+    heartbeat_interval = max(15, min(30, lease_seconds // 3))
+    heartbeat_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _task_execution_heartbeat(execution_id, heartbeat_stop, lease_seconds, heartbeat_interval)
+    )
     try:
-        result = await chat_with_agent(agent_id, ChatRequest(message=prompt), execution_mode=True)
-        parsed = parse_execution_payload(str(result["assistant_message"]["content"]))
-        manifest = execution_workspace.write_draft_artifacts(execution_id, parsed["files"])
-        completed = db.finish_task_execution(execution_id, parsed["summary"], manifest)
-        if completed is None or completed["status"] != "awaiting_approval":
-            execution_workspace.remove_draft_workspace(execution_id)
-    except Exception as error:
-        safe_error = str(error.detail) if isinstance(error, HTTPException) else str(error)
-        db.fail_task_execution(execution_id, safe_error[:1800])
+        try:
+            result = await chat_with_agent(agent_id, ChatRequest(message=prompt), execution_mode=True)
+            parsed = parse_execution_payload(str(result["assistant_message"]["content"]))
+            manifest = execution_workspace.write_draft_artifacts(execution_id, parsed["files"])
+            completed = db.finish_task_execution(execution_id, parsed["summary"], manifest)
+            if completed is None or completed["status"] != "awaiting_approval":
+                execution_workspace.remove_draft_workspace(execution_id)
+        except Exception as error:
+            safe_error = str(error.detail) if isinstance(error, HTTPException) else str(error)
+            db.fail_task_execution(execution_id, safe_error[:1800])
+    finally:
+        heartbeat_stop.set()
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
+
+
+async def _task_execution_heartbeat(
+    execution_id: str,
+    stop_event: asyncio.Event,
+    lease_seconds: int,
+    heartbeat_interval: int,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=heartbeat_interval)
+        except asyncio.TimeoutError:
+            try:
+                if not db.heartbeat_task_execution(execution_id, lease_seconds=lease_seconds):
+                    return
+            except Exception:
+                # A transient database error is retried on the next heartbeat.
+                continue
 
 
 async def task_execution_worker(stop_event: asyncio.Event) -> None:
-    """Claim and process work serially; database locks coordinate multiple instances."""
+    """Recover expired worker leases and process queued work serially."""
+    last_recovery_check = 0.0
+    lease_seconds = max(60, min(int(os.getenv("AGENTHQ_EXECUTION_LEASE_SECONDS", "300")), 900))
     while not stop_event.is_set():
+        monotonic_now = time.monotonic()
+        if monotonic_now - last_recovery_check >= 15:
+            try:
+                db.recover_stale_task_executions()
+            except Exception:
+                # Recovery is retried at the next sweep; never terminate the worker on a transient DB error.
+                pass
+            last_recovery_check = monotonic_now
+
         try:
-            item = db.claim_next_task_execution()
+            item = db.claim_next_task_execution(lease_seconds=lease_seconds)
         except Exception:
             item = None
         if item is None:
