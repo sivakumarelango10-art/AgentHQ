@@ -120,6 +120,7 @@ class TestDatabaseUrlValidation(unittest.TestCase):
 
         supervisor = UnifiedSupervisor()
         old_env = os.environ.get("DATABASE_URL")
+        old_environment = os.environ.get("ENVIRONMENT")
         try:
             # Set quoted URL in environment
             os.environ["DATABASE_URL"] = '"postgresql://user:pass@host/agenthq"'
@@ -141,6 +142,10 @@ class TestDatabaseUrlValidation(unittest.TestCase):
                 os.environ["DATABASE_URL"] = old_env
             else:
                 os.environ.pop("DATABASE_URL", None)
+            if old_environment is not None:
+                os.environ["ENVIRONMENT"] = old_environment
+            else:
+                os.environ.pop("ENVIRONMENT", None)
 
 
 if __name__ == "__main__":
