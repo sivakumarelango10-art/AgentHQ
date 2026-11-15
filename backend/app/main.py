@@ -1196,6 +1196,7 @@ async def post_task_execution_github_pr(
             task_title=task["title"],
             summary=str(item.get("summary") or ""),
             artifacts=artifacts,
+            expected_commit_sha=str(item.get("sandbox_commit_sha") or ""),
         )
         saved = db.attach_task_execution_github_pr(execution_id, details)
     except github_integration.GitHubIntegrationConfigurationError as error:

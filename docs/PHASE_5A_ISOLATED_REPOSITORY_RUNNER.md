@@ -29,7 +29,7 @@ The workflow has a 15-minute job timeout. If a project uses a different test com
 - No repository secrets, environment secrets, AgentHQ tokens, S3 credentials or Cloudflare credentials are passed to the test job.
 - The workflow's status-publishing jobs are separate from the test job. They run trusted GitHub-script code from the default-branch workflow and receive only \`statuses: write\`. The untrusted test process never receives the status-writing token.
 - The workflow does not write branches, create PRs, merge, modify the default branch or deploy.
-- AgentHQ verifies the exact target branch and SHA before running. A mismatched checkout fails before tests start.
+- AgentHQ verifies the exact target branch and SHA before running. A mismatched checkout fails before tests start. At implementation-PR creation, it also rechecks that the execution branch and returned PR head still match the successful tested SHA.
 - The runner setup workflow is installed through a Founder-reviewed PR before dispatch is enabled.
 
 ### Important limitation

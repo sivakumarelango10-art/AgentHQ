@@ -20,6 +20,46 @@ class GitHubIntegrationTests(unittest.TestCase):
             with self.assertRaises(github_integration.GitHubIntegrationConfigurationError):
                 github_integration._configuration()
 
+    def test_rejects_a_branch_that_changed_after_isolated_tests(self):
+        requests = []
+        tested_sha = "e" * 40
+        changed_sha = "f" * 40
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            requests.append((request.method, path))
+            if request.method == "GET" and path.endswith("/pulls"):
+                return httpx.Response(200, json=[])
+            if request.method == "GET" and path == "/repos/example/project":
+                return httpx.Response(200, json={"default_branch": "main"})
+            if request.method == "GET" and path.endswith("/git/ref/heads/main"):
+                return httpx.Response(200, json={"object": {"sha": "a" * 40}})
+            if request.method == "GET" and "/git/ref/heads/" in path and not path.endswith("/main"):
+                return httpx.Response(200, json={"object": {"sha": changed_sha}})
+            return httpx.Response(500, json={"message": f"Unexpected {request.method} {path}"})
+
+        real_async_client = httpx.AsyncClient
+
+        def client_factory(*args, **kwargs):
+            return real_async_client(*args, transport=httpx.MockTransport(handler), **kwargs)
+
+        with patch.dict(os.environ, {
+            "AGENTHQ_GITHUB_REPOSITORY": "example/project",
+            "AGENTHQ_GITHUB_TOKEN": "test-token",
+        }):
+            with patch("app.github_integration.httpx.AsyncClient", side_effect=client_factory):
+                with self.assertRaises(github_integration.GitHubIntegrationError):
+                    asyncio.run(github_integration.create_review_pull_request(
+                        execution_id="12345678-1234-1234-1234-123456789abc",
+                        task_title="Build a small API",
+                        summary="Founder-approved API draft.",
+                        artifacts=[{"path": "README.md", "content": "# API\n"}],
+                        expected_commit_sha=tested_sha,
+                    ))
+
+        self.assertFalse(any(method == "POST" and path.endswith("/pulls") for method, path in requests))
+        self.assertEqual(changed_sha, "f" * 40)
+
     def test_creates_a_dedicated_branch_and_pull_request_without_touching_base(self):
         commit_sha = "c" * 40
         counter = {"blob": 0}
