@@ -1,11 +1,11 @@
 # AgentHQ implementation and production status
 
-Current release: **0.5.0 — Hermes3D-first, founder-approved task delivery**
+Current release: **0.6.0 — Phase 5A hosted repository-test runner**
 
 Last verified production deployment: **2026-11-15**  
 Render service: [agenthq-hermes3d](https://agenthq-hermes3d.onrender.com)  
-Deployed AgentHQ commit: `d8ce0f2c684439ed4e2b04b6894b35cac9973171`  
-Pinned Hermes3D commit: `531bd1051dd164559b27ba6325e9b9b38cb1f68e`
+Deployed AgentHQ commit: `44746476ce97d222acb315cdb38ceb8ffbb7b4f6`  
+Pinned Hermes3D commit: `bdbbeac45e59d6482bcc29dc5a3c016abee874f6`
 
 ## Architecture
 
@@ -112,6 +112,10 @@ Keep object storage private and scope its credentials to the required bucket/pre
 - AgentHQ PR #26: 172 backend tests passed; 36 environment-dependent PostgreSQL/external-credential tests were skipped. Worker recovery, heartbeat, retry lineage, duplicate prevention, and five-attempt cap tests passed.
 - Hermes3D PR #4: typecheck, unit tests and Next.js production build passed for the founder retry controls.
 - AgentHQ PR #28: backend tests/syntax, frontend typecheck/build and the exact Hermes3D retry-UI pin checks passed.
+- AgentHQ PR #30: Phase 5A runner implementation CI passed, including backend tests/syntax, frontend production build, and the exact-tested-commit safeguards.
+- AgentHQ PR #31: Phase 5A Hermes3D setup/dispatch controls CI passed, including backend syntax, frontend typecheck/build, and the exact Hermes3D submodule pin.
+- Render deployment for commit `44746476ce97d222acb315cdb38ceb8ffbb7b4f6` completed successfully and is marked **live**.
+- Render startup logs confirm PostgreSQL environment validation, Alembic migrations completed successfully, AgentHQ `/health` returned HTTP 200, Hermes3D `/api/health` readiness passed, and the unified stack reported **LIVE AND READY**.
 - AgentHQ PR #25 synchronized the completed Phase 4B/4C branch into `main`; its CI passed.
 - Render deployment for commit `d8ce0f2` completed successfully and is marked live.
 - Render startup logs confirm Alembic migrations completed successfully, AgentHQ `/health` returned HTTP 200, Hermes3D health readiness succeeded, and the unified stack reported live/ready.
@@ -127,7 +131,7 @@ These checks require a founder-authenticated session and the live credentials in
 4. Publish a test approved execution to the configured GitHub repository; verify the dedicated branch, pull request, and target-repository CI result.
 5. Verify the GitHub token cannot write outside the one configured repository and the object-storage credentials cannot access unrelated buckets/prefixes.
 
-The Phase 4A–4D production deployment is live. Phase 5A requires the target repository runner setup PR to be merged and the Render GitHub token permissions to be expanded before live dispatch can succeed. A real S3 round-trip, real runner dispatch, and actual implementation PR remain acceptance tests; mocked CI does not replace them.
+The Phase 4A–4D workflow and Phase 5A application/Studio code are deployed live. **The Phase 5A runner is not yet operational for a target repository** until the Founder-reviewed workflow setup PR is merged in the configured target repository and the Render fine-grained GitHub token has the documented Actions, Contents, Workflows, Pull requests, Commit statuses, and Metadata permissions. A real S3 round-trip, runner dispatch, successful exact-commit status, and implementation PR remain acceptance tests; mocked CI does not replace them.
 
 ## Not yet implemented — next phases
 
