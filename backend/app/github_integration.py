@@ -160,6 +160,8 @@ async def create_review_pull_request(
         if not re.fullmatch(r"[0-9a-fA-F]{40}", base_sha):
             raise GitHubIntegrationError("GitHub returned an invalid base branch commit.")
 
+        safe_title = " ".join((task_title or "AgentHQ task").split())[:160]
+
         # A retry may find a branch created by a previous request that timed out
         # before the PR response was persisted. Reuse that dedicated branch.
         encoded_branch = quote(branch, safe="")
@@ -203,7 +205,6 @@ async def create_review_pull_request(
             if not re.fullmatch(r"[0-9a-fA-F]{40}", new_tree_sha):
                 raise GitHubIntegrationError("GitHub returned an invalid commit tree.")
 
-            safe_title = " ".join((task_title or "AgentHQ task").split())[:160]
             commit = await _request(
                 client,
                 "POST",
