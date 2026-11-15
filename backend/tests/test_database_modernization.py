@@ -254,7 +254,7 @@ class DatabaseModernizationTests(unittest.TestCase):
             eng = db.create_database_engine(f"sqlite:///{alembic_db.as_posix()}")
             with eng.connect() as conn:
                 version = conn.execute(db.text("SELECT version_num FROM alembic_version")).scalar()
-                self.assertIn(version, ("0002_daily_ai_usage", "0003_persistent_security_state", "0004_unified_task_management", "0005_task_lifecycle_and_concurrency", "0006_task_execution_approval", "0007_task_execution_github_pr", "0008_task_execution_recovery"))
+                self.assertIn(version, ("0002_daily_ai_usage", "0003_persistent_security_state", "0004_unified_task_management", "0005_task_lifecycle_and_concurrency", "0006_task_execution_approval", "0007_task_execution_github_pr", "0008_task_execution_recovery", "0009_execution_sandbox_runner"))
                 agents = conn.execute(db.text("SELECT COUNT(*) FROM agents")).scalar()
                 self.assertEqual(agents, 7)
             eng.dispose()
