@@ -22,11 +22,10 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from . import execution as execution_workspace
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import db, security
+from . import db, security, github_integration
 from .providers import (
     AICompletionResult,
     AIProviderAuthError,
@@ -921,14 +920,14 @@ async def download_task_execution_artifact(
     execution_id: str,
     artifact_path: str,
     auth: dict[str, Any] = Depends(security.require_runtime_auth),
-) -> FileResponse:
+) -> Response:
     item = db.get_task_execution(execution_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Execution not found.")
     if item["status"] not in {"awaiting_approval", "approved"}:
         raise HTTPException(status_code=409, detail="Draft artifacts are not available in this execution state.")
     try:
-        file_path = execution_workspace.resolve_artifact(
+        payload = execution_workspace.read_artifact_bytes(
             execution_id,
             artifact_path,
             item["artifacts"],
@@ -936,11 +935,15 @@ async def download_task_execution_artifact(
         )
     except (FileNotFoundError, execution_workspace.ArtifactValidationError) as error:
         raise HTTPException(status_code=404, detail="Artifact not found.") from error
-    return FileResponse(
-        path=file_path,
-        filename=file_path.name,
+    filename = artifact_path.rsplit("/", 1)[-1]
+    return Response(
+        content=payload,
         media_type="text/plain; charset=utf-8",
-        headers={"X-Content-Type-Options": "nosniff"},
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -965,9 +968,61 @@ async def approve_task_execution(
     if approved is None:
         execution_workspace.remove_approved_workspace(execution_id)
         raise HTTPException(status_code=404, detail="Execution not found.")
+    execution_workspace.remove_draft_workspace(execution_id)
     return {
         "item": approved,
         "message": "Deliverables approved and copied to the private approved workspace. No code was executed or deployed.",
+    }
+
+
+@app.post("/api/task-executions/{execution_id}/github-pr")
+async def post_task_execution_github_pr(
+    execution_id: str,
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    item = db.get_task_execution(execution_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    if item["status"] != "approved":
+        raise HTTPException(status_code=409, detail="Only founder-approved executions can be published to GitHub.")
+    if item.get("github_pr_url"):
+        return {"item": item, "message": "This execution already has a GitHub pull request."}
+    task = db.get_task(item["task_id"])
+    if task is None:
+        raise HTTPException(status_code=404, detail="Parent task not found.")
+    try:
+        artifacts = []
+        for artifact in item["artifacts"]:
+            payload = execution_workspace.read_artifact_bytes(
+                execution_id,
+                artifact["path"],
+                item["artifacts"],
+                approved=True,
+            )
+            artifacts.append({
+                "path": artifact["path"],
+                "content": payload.decode("utf-8"),
+            })
+        details = await github_integration.create_review_pull_request(
+            execution_id=execution_id,
+            task_title=task["title"],
+            summary=str(item.get("summary") or ""),
+            artifacts=artifacts,
+        )
+        saved = db.attach_task_execution_github_pr(execution_id, details)
+    except github_integration.GitHubIntegrationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except github_integration.GitHubIntegrationError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except (UnicodeDecodeError, execution_workspace.ArtifactValidationError) as error:
+        raise HTTPException(status_code=409, detail="An approved artifact failed its integrity or text validation check.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    return {
+        "item": saved,
+        "message": "A GitHub pull request was opened from the approved deliverables. The base branch was not modified.",
     }
 
 
