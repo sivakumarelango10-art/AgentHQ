@@ -30,3 +30,15 @@ This integration commit pins the Hermes3D UI that exposes the founder-approved G
 
 - Hermes3D independently runs typecheck, unit tests, and its Next.js production build for the merged code.
 - AgentHQ verifies the exact Hermes3D gitlink SHA used by its Docker build. The Hermes3D repository is private, so the default AgentHQ Actions token cannot recursively clone that submodule.
+
+
+## Phase 4D — worker reliability and founder retries
+
+The AgentHQ backend now tracks worker leases and heartbeats for execution attempts. Expired worker leases are marked failed and move the parent task to `needs_attention`. Founders can explicitly retry a failed or rejected attempt; each retry creates a new history record, carries prior failure/rejection feedback forward, and is capped at five attempts per task.
+
+Hermes3D exposes the attempt number, lineage, and retry action in the task details panel. The action is only shown for failed or rejected executions, and AgentHQ revalidates the conditions server-side.
+
+- AgentHQ PR #26 merged with backend recovery, Alembic migration 0008, and 172 passing backend tests (36 environment-dependent skips).
+- Hermes3D PR #4 merged with retry controls; typecheck, all unit tests, and production build passed.
+- The unified Docker container now pins Hermes3D merge commit `531bd1051dd164559b27ba6325e9b9b38cb1f68e`.
+- No automatic retry loop is enabled. Each additional attempt requires an explicit founder action.
