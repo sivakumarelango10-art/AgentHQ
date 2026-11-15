@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import random
@@ -459,6 +460,49 @@ class TaskAuditLog(Base):
             "note": self.note,
             "actor": self.actor,
             "at": self.at,
+        }
+
+
+
+class TaskExecution(Base):
+    """One durable, founder-reviewed attempt to produce task deliverables."""
+    __tablename__ = "task_executions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(64), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifacts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by: Mapped[str] = mapped_column(String(80), nullable=False, default="founder")
+    approved_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    rejection_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    approved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'running', 'awaiting_approval', 'approved', 'rejected', 'failed', 'cancelled')", name="check_task_execution_status"),
+        Index("idx_task_executions_task_created", task_id, created_at.desc()),
+        Index("idx_task_executions_status_created", status, created_at),
+    )
+    def to_dict(self) -> dict[str, Any]:
+        try:
+            artifacts = json.loads(self.artifacts_json or "[]")
+            if not isinstance(artifacts, list):
+                artifacts = []
+        except (TypeError, ValueError):
+            artifacts = []
+        return {
+            "id": self.id, "task_id": self.task_id, "agent_id": self.agent_id,
+            "status": self.status, "instructions": self.instructions, "summary": self.summary,
+            "artifacts": artifacts, "error": self.error, "requested_by": self.requested_by,
+            "approved_by": self.approved_by, "rejection_note": self.rejection_note,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+            "started_at": self.started_at, "finished_at": self.finished_at,
+            "approved_at": self.approved_at,
         }
 
 
@@ -1658,6 +1702,210 @@ def cancel_task(
         session.add(audit)
         session.flush()
         return task.to_dict()
+
+
+
+def create_task_execution(task_id: str, instructions: str = "", actor: str = "founder") -> dict[str, Any]:
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        task = session.get(Task, task_id)
+        if task is None:
+            raise ValueError("Task not found.")
+        if not task.assigned_agent_id:
+            raise ValueError("Assign this task to an employee before requesting execution.")
+        if task.status in {"done", "cancelled"}:
+            raise ValueError("Completed or cancelled tasks cannot be executed.")
+        active = session.scalars(select(TaskExecution).where(
+            TaskExecution.task_id == task_id,
+            TaskExecution.status.in_(("queued", "running", "awaiting_approval")),
+        )).first()
+        if active is not None:
+            raise ValueError("This task already has an active execution.")
+        record = TaskExecution(
+            id=str(uuid4()), task_id=task.id, agent_id=task.assigned_agent_id,
+            status="queued", instructions=(instructions or "").strip(),
+            artifacts_json="[]", requested_by=(actor or "founder")[:80],
+            created_at=now, updated_at=now,
+        )
+        session.add(record)
+        session.flush()
+        return record.to_dict()
+
+
+def get_task_execution(execution_id: str) -> dict[str, Any] | None:
+    with get_session() as session:
+        record = session.get(TaskExecution, execution_id)
+        return record.to_dict() if record else None
+
+
+def list_task_executions(task_id: str) -> list[dict[str, Any]]:
+    with get_session() as session:
+        stmt = select(TaskExecution).where(TaskExecution.task_id == task_id).order_by(TaskExecution.created_at.desc())
+        return [record.to_dict() for record in session.scalars(stmt).all()]
+
+
+def claim_next_task_execution() -> dict[str, Any] | None:
+    now = utc_now()
+    engine = get_engine()
+    with get_session(immediate=True) as session:
+        stmt = select(TaskExecution).where(TaskExecution.status == "queued").order_by(TaskExecution.created_at.asc()).limit(1)
+        if engine.dialect.name == "postgresql":
+            stmt = stmt.with_for_update(skip_locked=True)
+        record = session.scalars(stmt).first()
+        if record is None:
+            return None
+        task = session.get(Task, record.task_id)
+        agent = session.get(Agent, record.agent_id)
+        if task is None or agent is None or task.assigned_agent_id != record.agent_id:
+            record.status = "failed"
+            record.error = "The task, employee, or assignment changed before execution started."
+            record.finished_at = now
+            record.updated_at = now
+            session.flush()
+            return None
+        if task.status in {"done", "cancelled"}:
+            record.status = "cancelled"
+            record.error = "The task was completed or cancelled before execution started."
+            record.finished_at = now
+            record.updated_at = now
+            session.flush()
+            return None
+        if task.status != "working":
+            if "working" not in VALID_STATUS_TRANSITIONS.get(task.status, set()):
+                record.status = "failed"
+                record.error = f"Task cannot move from '{task.status}' to 'working'."
+                record.finished_at = now
+                record.updated_at = now
+                session.flush()
+                return None
+            old_status = task.status
+            task.status = "working"
+            task.version = (task.version or 1) + 1
+            task.updated_at = now
+            session.add(TaskAuditLog(
+                id=str(uuid4()), task_id=task.id, action="status_changed",
+                from_status=old_status, to_status="working",
+                from_agent_id=task.assigned_agent_id, to_agent_id=task.assigned_agent_id,
+                note=f"Execution {record.id} claimed by {agent.name}.",
+                actor="agenthq-worker", at=now,
+            ))
+        record.status = "running"
+        record.started_at = now
+        record.updated_at = now
+        session.flush()
+        return record.to_dict()
+
+
+def finish_task_execution(execution_id: str, summary: str, artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if record.status != "running":
+            raise ValueError("Only a running execution can submit deliverables for review.")
+        record.status = "awaiting_approval"
+        record.summary = (summary or "Draft deliverables are ready for review.")[:12000]
+        record.artifacts_json = json.dumps(artifacts, ensure_ascii=False)
+        record.error = None
+        record.finished_at = now
+        record.updated_at = now
+        session.flush()
+        return record.to_dict()
+
+
+def fail_task_execution(execution_id: str, error: str) -> dict[str, Any] | None:
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if record.status not in {"queued", "running"}:
+            return record.to_dict()
+        record.status = "failed"
+        record.error = (error or "Execution failed.")[:2000]
+        record.finished_at = now
+        record.updated_at = now
+        task = session.get(Task, record.task_id)
+        if task is not None and task.status == "working":
+            old_status = task.status
+            task.status = "needs_attention"
+            task.version = (task.version or 1) + 1
+            task.updated_at = now
+            session.add(TaskAuditLog(
+                id=str(uuid4()), task_id=task.id, action="status_changed",
+                from_status=old_status, to_status="needs_attention",
+                from_agent_id=task.assigned_agent_id, to_agent_id=task.assigned_agent_id,
+                note=f"Execution {record.id} failed and needs founder attention.",
+                actor="agenthq-worker", at=now,
+            ))
+        session.flush()
+        return record.to_dict()
+
+
+def approve_task_execution(execution_id: str, actor: str = "founder") -> dict[str, Any] | None:
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if record.status != "awaiting_approval":
+            raise ValueError("Only deliverables awaiting approval can be approved.")
+        task = session.get(Task, record.task_id)
+        if task is None:
+            raise ValueError("The parent task no longer exists.")
+        if task.status != "working":
+            raise ValueError("The parent task is no longer in the working state; refresh before approving.")
+        record.status = "approved"
+        record.approved_by = (actor or "founder")[:80]
+        record.approved_at = now
+        record.updated_at = now
+        old_status = task.status
+        task.status = "done"
+        task.completed_at = now
+        task.cancelled_at = None
+        task.version = (task.version or 1) + 1
+        task.updated_at = now
+        session.add(TaskAuditLog(
+            id=str(uuid4()), task_id=task.id, action="status_changed",
+            from_status=old_status, to_status="done",
+            from_agent_id=task.assigned_agent_id, to_agent_id=task.assigned_agent_id,
+            note=f"Execution {record.id} approved by {actor or 'founder'}.",
+            actor=(actor or "founder")[:80], at=now,
+        ))
+        session.flush()
+        return record.to_dict()
+
+
+def reject_task_execution(execution_id: str, actor: str = "founder", note: str = "") -> dict[str, Any] | None:
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if record.status != "awaiting_approval":
+            raise ValueError("Only deliverables awaiting approval can be rejected.")
+        task = session.get(Task, record.task_id)
+        if task is None:
+            raise ValueError("The parent task no longer exists.")
+        if task.status != "working":
+            raise ValueError("The parent task is no longer in the working state; refresh before rejecting.")
+        record.status = "rejected"
+        record.rejection_note = (note or "Founder requested revisions.")[:5000]
+        record.updated_at = now
+        old_status = task.status
+        task.status = "needs_attention"
+        task.version = (task.version or 1) + 1
+        task.updated_at = now
+        session.add(TaskAuditLog(
+            id=str(uuid4()), task_id=task.id, action="status_changed",
+            from_status=old_status, to_status="needs_attention",
+            from_agent_id=task.assigned_agent_id, to_agent_id=task.assigned_agent_id,
+            note=f"Execution {record.id} rejected: {record.rejection_note}",
+            actor=(actor or "founder")[:80], at=now,
+        ))
+        session.flush()
+        return record.to_dict()
 
 
 def get_agent(agent_id: str) -> dict[str, Any] | None:

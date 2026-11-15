@@ -219,16 +219,39 @@ To prevent lost updates, race conditions, and stale writes across concurrent ses
 
 ---
 
-## 8. Execution Boundaries & Autonomy Guarantees
+## 9. Founder-approved task deliverables (Phase 4A)
+
+A task can move through a controlled deliverable workflow:
+
+1. The Founder queues an execution for the task's assigned canonical employee.
+2. The database worker claims the execution and transitions an eligible task to `working`.
+3. The configured AI provider returns a strict JSON payload containing a summary and up to five text artifacts.
+4. AgentHQ stores those artifacts in a private per-execution workspace. It validates relative paths, file types, byte limits, Python syntax with `ast.parse`, and JSON syntax with `json.loads`.
+5. The execution becomes `awaiting_approval`. Artifacts are downloadable only through authenticated API endpoints.
+6. Founder approval copies the artifacts into the private approved workspace and transitions the task to `done`. Rejection transitions the task to `needs_attention`.
+
+The execution worker does not launch a shell, run generated Python/JavaScript, install dependencies, invoke test suites, read arbitrary project files, browse the internet, write to a Git repository, or deploy applications. AST/JSON parsing is static validation, not execution. Approval means the Founder accepted the generated deliverables; it does not mean those files were merged or deployed.
+
+### Security and retention
+
+- Generated artifacts are limited to five UTF-8 text files, 48 KB per file, and 96 KB total.
+- Absolute paths, hidden path segments, parent traversal, unsupported extensions, and sensitive filenames are rejected.
+- Draft files are private and served only through authenticated endpoints after a state check.
+- SHA-256 hashes are recorded for each artifact and rechecked before approval.
+- File permissions are set to owner-only where the host supports POSIX permissions.
+- Execution records, claims, failures, approvals, and rejections are persisted; task transitions are written to the existing audit log.
+- Render Free container storage is ephemeral. Set `AGENTHQ_WORKSPACE_DIR` to a mounted persistent-disk path before relying on artifact retention across restarts.
+- Set `AGENTHQ_TASK_EXECUTION_ENABLED=true` to run the background worker. It is disabled by default in local environments.
+## 10. Execution Boundaries & Autonomy Guarantees
 
 > [!IMPORTANT]
 > **Strict Execution Boundaries:**
-> Task management in AgentHQ is **strictly declarative project management**.
+> Task management is persistent and auditable. Phase 4A adds a limited draft-deliverable workflow with explicit Founder approval.
 >
-> Task creation, status modification, and employee assignment do **NOT**:
+> Task creation, status modification, employee assignment, and draft generation do **NOT**:
 > 1. Trigger autonomous shell command execution.
 > 2. Read or modify the host filesystem.
 > 3. Simulate fake task completions with background LLM output.
 > 4. Modify cloud deployments without explicit founder consent.
 >
-> All actual code execution remains subject to human founder approval and explicit tool sandboxing.
+> Generated code is not executed by AgentHQ in this phase. Future execution must use a separately isolated sandbox, scoped permissions, explicit approvals, and audit logs.
