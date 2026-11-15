@@ -1,126 +1,149 @@
-# AgentHQ implementation status
+# AgentHQ implementation and production status
 
-Current version: **0.5.0 — Hermes3D-first architecture**
+Current release: **0.5.0 — Hermes3D-first, founder-approved task delivery**
 
-## Product architecture decision
+Last verified production deployment: **2026-11-15**  
+Render service: [agenthq-hermes3d](https://agenthq-hermes3d.onrender.com)  
+Deployed AgentHQ commit: `d8ce0f2c684439ed4e2b04b6894b35cac9973171`  
+Pinned Hermes3D commit: `531bd1051dd164559b27ba6325e9b9b38cb1f68e`
 
-Hermes3D is the primary user-facing application and visual foundation. AgentHQ FastAPI + SQLite + Ollama is the authoritative company runtime and data service. The older AgentHQ Vite/React application is retained as a legacy/reference dashboard during migration; it is not the normal startup target and must not be nested around Hermes3D.
+## Architecture
 
-Daily browser entry: `http://localhost:3000/office`.
+- **Hermes3D Studio** is the primary user interface (`/office`), including the 3D office and task board.
+- **AgentHQ FastAPI** is the employee/task execution API and runtime.
+- **PostgreSQL** is the configured production database; Alembic migrations run at startup.
+- **Cloudflare Workers AI** is the configured hosted AI provider in the Render blueprint.
+- **S3-compatible object storage** is the production artifact-storage mode selected by the Render blueprint. The bucket must remain private.
+- The browser calls Hermes3D server routes; server-side proxies keep runtime and GitHub credentials out of browser code.
 
-Start both services with `E:\AgentHQ\start-agenthq-stack.ps1`. See `README.md` and `docs/HERMES3D_FIRST_AUDIT_AND_MIGRATION.md`.
+## Delivered phases
 
-## Working foundations
-- Legacy React + TypeScript + Vite management shell and React Three Fiber office preview retained for reference during migration.
-- Hermes3D native Studio is the intended product UI; its actual 3D office, native panels and chat should be preserved rather than recreated in the Vite shell.
-- Persistent employee directory and task queue stored in local SQLite.
-- Add employee workflow with department, room and color fields.
-- Create, assign, list and cancel queued tasks.
-- FastAPI backend with local Ollama health checks.
-- Local Qwen3 model integration through Ollama.
-- Role-aware AI employee chat using each employee's name, role, department and office.
-- Persistent conversations and message history in SQLite.
-- Conversation workspace with employee selection, recent chats, message history and local-model status.
-- Chat responses update the employee's working/idle status while the model is responding.
+### Phase 4A — founder-approved task deliverables
 
-## Phase 4A — Founder-approved task deliverables
+- A founder can queue an execution for a task's assigned canonical AgentHQ employee.
+- The worker asks the configured AI provider for structured summaries and bounded text/code-file drafts.
+- Execution state and task transitions are stored in the database.
+- Files are path/extension/size validated and stored in a private execution workspace.
+- Python files receive AST parsing and JSON files receive JSON parsing. This is static syntax validation, **not execution or test verification**.
+- Founder can preview artifacts and approve or reject them. Approval copies artifacts to the approved workspace; rejection returns the task to `needs_attention`.
 
-- A Founder can queue an execution for a task's assigned employee.
-- A background worker requests structured draft text/code files from the configured AI provider.
-- Drafts are stored in a private per-execution workspace and exposed only through authenticated API routes.
-- Python files receive AST parsing; JSON files receive JSON parsing. This is syntax validation only, not code execution or test execution.
-- The Founder can approve or reject the draft. Approval copies files to the private approved workspace and moves the parent task to `done`; rejection moves it to `needs_attention`.
-- Execution records and claim/approval/rejection task history are persisted in PostgreSQL/SQLite through Alembic migration `0006_task_execution_approval`.
-- No shell, arbitrary code execution, live web access, project-repository writes, deployment actions, or inter-agent delegation are enabled.
-- On Render Free, container storage is ephemeral. Configure `AGENTHQ_WORKSPACE_DIR` to a mounted persistent-disk path before depending on long-term artifact retention.
+### Phase 4B — Hermes3D task-board integration
 
-### Phase 4A API
-- `POST /api/tasks/{task_id}/executions` — queue an assigned employee.
-- `GET /api/tasks/{task_id}/executions` and `GET /api/task-executions/{execution_id}` — inspect status.
-- `GET /api/task-executions/{execution_id}/artifacts` — list reviewable artifacts.
-- `GET /api/task-executions/{execution_id}/artifacts/{path}` — download a reviewable artifact.
-- `POST /api/task-executions/{execution_id}/approve` — approve and publish to the private approved workspace.
-- `POST /api/task-executions/{execution_id}/reject` — reject and request revisions.
+- The task details panel loads canonical AgentHQ employees.
+- A task is synchronized to AgentHQ before its execution is queued, keeping the execution attached to the authoritative task ID.
+- Execution status/history refreshes in the Studio.
+- The founder can preview artifacts, approve or reject work, and see status changes.
+- Server-side proxying prevents the runtime token from being sent to the browser.
 
-Enable the background worker with `AGENTHQ_TASK_EXECUTION_ENABLED=true`. The worker is disabled by default in local environments. Workspace defaults to `backend/data/agenthq-workspace`; use `AGENTHQ_WORKSPACE_DIR` to change it.
+### Phase 4C — durable artifacts and GitHub pull requests
 
-## Phase 3 scope and boundaries
-- AI employees can reason about requests, discuss plans, answer questions and draft text/code in chat.
-- The last 16 messages in a conversation are included as context.
-- Conversation history is stored locally in `backend/data/agenthq.db`.
-- The backend calls the locally configured Ollama model; no hosted AI provider or API key is required.
-- Chat requests have a bounded 180-second timeout and use a 4K context setting by default.
+- Production storage mode supports S3-compatible object storage under private pending/approved execution prefixes.
+- SHA-256 and byte-length checks protect artifact reads and approvals.
+- Only founder-approved executions can be published to GitHub.
+- Publishing creates a dedicated `agenthq/execution-...` branch and opens a pull request against the configured repository's default branch.
+- Repeated publishing requests for the same execution reuse existing PR metadata rather than creating duplicate PRs.
+- The Studio shows the resulting validated GitHub pull-request link.
+- AgentHQ does not merge that PR, modify the target repository's default branch directly, or deploy the target project.
 
-Not implemented yet:
-- Automatic code execution, test-suite execution, terminal tools, web research, project-repository writes, or deployments.
-- Agent-to-agent delegation and autonomous scheduling.
-- A Hermes3D approval/review UI for the new Phase 4A API (API endpoints are available; visual integration is a follow-up).
-- Live web research or access to local project files.
-- Rigged character models and task-driven walking/typing animations.
-- Conversation search, deletion, export and configurable memory management.
+### Phase 4D — worker recovery and founder retries
 
-A task marked **Queued** is still only saved in the local database. Chatting with an employee does not execute queued tasks.
+- Worker leases and heartbeats detect interrupted executions; stale attempts become failed and move the task to `needs_attention`.
+- A founder can retry failed/rejected attempts with revised instructions; each retry creates a new linked history record, retains prior errors, and is capped at five attempts per task.
+- Hermes3D displays attempt number, retry lineage, and an explicit retry action for failed/rejected work.
+- There is no automatic retry loop. Each retry requires a founder action.
 
-## Local run commands
+### Phase 5A — ephemeral GitHub-hosted repository tests
 
-Backend:
-```powershell
-cd E:\AgentHQ\backend
-Set-ExecutionPolicy -Scope Process Bypass -Force
-.\run.ps1
-```
+- Only founder-approved execution artifacts are committed to a deterministic `agenthq/execution-<hash>` branch.
+- A trusted `.github/workflows/agenthq-sandbox.yml` workflow is installed in the configured target repository through a Founder-reviewed setup PR.
+- GitHub Actions checks out the exact generated commit on a fresh `ubuntu-24.04` hosted runner, verifies its SHA, and runs the supported Node.js or Python test profile with a 15-minute timeout.
+- The test job receives `contents: read` only, does not persist checkout credentials, and receives no repository/environment secrets or AgentHQ/S3/Cloudflare token.
+- A separate trusted workflow job receives `statuses: write` and publishes the result; the project test process does not receive that token.
+- Only a successful status for the exact tested commit unlocks implementation-PR publishing. AgentHQ verifies the branch SHA and the resulting PR head SHA before recording the PR.
+- The runner is ephemeral but **not network-isolated**: test scripts and dependency hooks can access the public internet and checked-out repository files. Do not use this phase for confidential source that must not be exposed to code being tested.
 
-Frontend:
-```powershell
-cd E:\AgentHQ\frontend
-npm run dev
-```
+## Key API routes
 
-URLs:
-- Frontend: http://127.0.0.1:5173
-- API health: http://127.0.0.1:8000/api/health
-- API docs: http://127.0.0.1:8000/docs
+- `POST /api/tasks/{task_id}/executions` — queue an execution.
+- `GET /api/tasks/{task_id}/executions` — list task executions.
+- `GET /api/task-executions/{execution_id}` — retrieve execution status/details.
+- `GET /api/task-executions/{execution_id}/artifacts` — list artifacts.
+- `GET /api/task-executions/{execution_id}/artifacts/{path}` — download an artifact.
+- `POST /api/task-executions/{execution_id}/approve` — founder approval.
+- `POST /api/task-executions/{execution_id}/reject` — founder rejection.
+- `POST /api/task-executions/{execution_id}/github-pr` — publish an approved execution as a GitHub PR.
+- `POST /api/task-executions/{execution_id}/retry` — create a new founder-authorized attempt from a failed or rejected execution.
+- `GET /api/github-runner/status` — inspect target repository workflow installation.
+- `POST /api/github-runner/install` — create/reuse the trusted runner workflow setup PR.
+- `POST /api/task-executions/{execution_id}/sandbox-run` and `GET /api/task-executions/{execution_id}/sandbox-run` — dispatch tests and refresh the result.
 
-Ollama:
-- Configured model: `qwen3:4b` by default.
-- The model must be installed locally and Ollama must be running.
-- Set `OLLAMA_MODEL` or `OLLAMA_BASE_URL` in `backend/.env` to override defaults.
+## Production configuration
 
-## Phase 3 API endpoints
-- `GET /api/conversations` — list recent conversations.
-- `GET /api/conversations/{conversation_id}/messages` — retrieve stored messages.
-- `POST /api/agents/{agent_id}/chat` — send a message to one employee and receive a local-model response.
+The Render Blueprint selects the following modes. Secret values must be set in the Render Dashboard and must never be committed to source control.
 
-Example chat request:
-```json
-{
-  "message": "Help me plan the next steps for AgentHQ.",
-  "conversation_id": null
-}
-```
+**AI and worker**
+- `AI_PROVIDER=cloudflare`
+- `AGENTHQ_TASK_EXECUTION_ENABLED=true`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
 
-## Hermes3D custom runtime integration
-- AgentHQ exposes GET /health, GET /state, GET /registry, and POST /v1/chat/completions for Hermes3D's Custom backend profile.
-- Hermes3D roster entries are generated from real SQLite employee records using stable name-derived runtime IDs.
-- The configured local Ollama model is exposed through the runtime registry.
-- Hermes3D session IDs are mapped to persistent AgentHQ conversation rows using the runtime_sessions table.
-- Chat requests are routed through the existing role-aware AgentHQ Ollama chat handler; no second agent database is created.
-- Streaming chat, Kanban task synchronization, tool approvals, files, cron and autonomous execution are not yet supported.
+**Artifact storage**
+- `AGENTHQ_WORKSPACE_STORAGE=s3`
+- `AWS_S3_BUCKET`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- Optional `AWS_ENDPOINT_URL_S3` (HTTPS for S3-compatible endpoints)
+- `AWS_REGION`
 
-## Safety and privacy boundary
-The backend binds to `127.0.0.1:8000`; conversations and employee records are stored on the local machine. This phase does not execute shell commands, modify files, browse the live internet, deploy applications or autonomously complete tasks. Role prompts explicitly tell employees not to claim that they performed those actions. Later execution capabilities must use scoped permissions, explicit approvals and audit logs.
+**GitHub publishing**
+- `AGENTHQ_GITHUB_REPOSITORY=owner/repository`
+- `AGENTHQ_GITHUB_TOKEN` — fine-grained token scoped to the one target repository, with Actions write, Contents write, Workflows write, Pull requests write, Commit statuses read and Metadata read.
 
+Keep object storage private and scope its credentials to the required bucket/prefix. Scope the GitHub token to only the target repository. Do not put secrets in frontend environment variables or browser requests.
 
-## 3D Office Rendering Refinement (Hermes3D-inspired)
+## Verification completed
 
-- Improved the React Three Fiber office environment with layered timber floor surfaces, architectural perimeter walls, glass partitions, mullions, refined lighting and a modern lounge area.
-- Added cinematic ACES tone mapping and city environment lighting.
-- Added Balanced and Ultra render-quality controls; Balanced is the default and uses reduced pixel ratio and 1024 shadow maps for laptop GPUs.
-- Preserved AgentHQ's room-aware employee positioning and existing API/database/AI logic.
-- No Hermes3D runtime, gateway, server, or agent backend has been imported. AgentHQ remains a standalone FastAPI + Ollama application.
-- Added third-party notice documenting the Hermes3D MIT-licensed inspiration.
+- AgentHQ PR #23 CI: 169 backend tests passed, 36 environment-dependent tests skipped; frontend checks passed. S3/GitHub integrations were mocked in automated tests.
+- Hermes3D Phase 4C PR #3 CI: TypeScript typecheck, unit tests and Next.js production build passed.
+- AgentHQ PR #24 CI: frontend typecheck/build, backend syntax and exact Hermes3D git-submodule pin checks passed.
+- AgentHQ PR #26: 172 backend tests passed; 36 environment-dependent PostgreSQL/external-credential tests were skipped. Worker recovery, heartbeat, retry lineage, duplicate prevention, and five-attempt cap tests passed.
+- Hermes3D PR #4: typecheck, unit tests and Next.js production build passed for the founder retry controls.
+- AgentHQ PR #28: backend tests/syntax, frontend typecheck/build and exact Hermes3D retry-UI pin checks passed.
+- AgentHQ PR #26: 172 backend tests passed; 36 environment-dependent PostgreSQL/external-credential tests were skipped. Worker recovery, heartbeat, retry lineage, duplicate prevention, and five-attempt cap tests passed.
+- Hermes3D PR #4: typecheck, unit tests and Next.js production build passed for the founder retry controls.
+- AgentHQ PR #28: backend tests/syntax, frontend typecheck/build and the exact Hermes3D retry-UI pin checks passed.
+- AgentHQ PR #25 synchronized the completed Phase 4B/4C branch into `main`; its CI passed.
+- Render deployment for commit `d8ce0f2` completed successfully and is marked live.
+- Render startup logs confirm Alembic migrations completed successfully, AgentHQ `/health` returned HTTP 200, Hermes3D health readiness succeeded, and the unified stack reported live/ready.
+- Render startup logs confirm production database validation, successful Alembic migrations, AgentHQ `/health` returning HTTP 200, Hermes3D `/api/health` readiness, and the unified stack reporting ready.
 
-Validation required:
-- Frontend production build and TypeScript compile.
-- Browser test for camera controls, employee selection, room labels, and layout.
-- Performance check on the RTX A2000 4GB at Balanced; Ultra is optional and should be used only after measuring frame rate.
+## Remaining production acceptance tests
+
+These checks require a founder-authenticated session and the live credentials in Render; mocked CI tests do not replace them:
+
+1. In Render Dashboard, confirm the S3 and GitHub environment variables are present without revealing their values.
+2. From the Studio, queue a harmless test task, inspect the generated artifacts, and exercise both approve and reject paths.
+3. Confirm the approved artifact survives a service restart by reading it back from the configured private object store.
+4. Publish a test approved execution to the configured GitHub repository; verify the dedicated branch, pull request, and target-repository CI result.
+5. Verify the GitHub token cannot write outside the one configured repository and the object-storage credentials cannot access unrelated buckets/prefixes.
+
+The Phase 4A–4D production deployment is live. Phase 5A requires the target repository runner setup PR to be merged and the Render GitHub token permissions to be expanded before live dispatch can succeed. A real S3 round-trip, real runner dispatch, and actual implementation PR remain acceptance tests; mocked CI does not replace them.
+
+## Not yet implemented — next phases
+
+The current deliverable workflow is not an unrestricted autonomous coding agent. These capabilities still require separate implementation and security review:
+
+- General-purpose shell/terminal and arbitrary repository editing tools are not exposed to agents or the Render web process.
+- Strong network-egress isolation for the hosted test runner; Phase 5A runner is ephemeral but can access public internet and checked-out source.
+- Additional reviewed project test profiles beyond the constrained Node.js and Python profiles.
+- Agent-to-agent delegation and coordination.
+- Automatic retry/backoff loops and horizontal worker-queue scaling (Phase 4D supports only a founder-requested retry, capped at five attempts).
+- Scheduled tasks, retry/backoff and crash-recovery policies for long-running work.
+- Persistent employee memory beyond the current conversation/task context.
+- Operational dashboards, execution telemetry, retention and admin controls.
+
+Untrusted generated code must not be run inside the public FastAPI/Next.js web process. Any future executor must use a separate isolated runtime with resource limits, network and filesystem policy, explicit approval gates and auditable results.
+
+## Local development
+
+The Windows PowerShell helper and local Ollama instructions in `README.md` are for the local development setup. They are not a description of the Render production provider/database configuration.

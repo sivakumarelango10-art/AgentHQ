@@ -4,6 +4,8 @@
 
 # AgentHQ — Local AI Company Runtime
 
+> **Production status (2026-11-15):** AgentHQ + Hermes3D is deployed on Render. The production stack uses PostgreSQL, Cloudflare Workers AI, founder-approved task deliverables, S3-compatible artifact storage, and a Hermes3D review/approval/GitHub-PR publishing UI. The Windows/Ollama instructions below describe local development only. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for the deployed architecture, verified checks, required production settings, acceptance tests, and remaining roadmap. Phase 5A runs approved repository tests only on a separate ephemeral GitHub-hosted runner (not network-isolated); the runner receives no repository/environment secrets or write token, and implementation PRs are unlocked only after the exact tested commit passes. AgentHQ does not merge or deploy generated pull requests.
+
 AgentHQ is the local company runtime behind a Hermes3D-powered AI office. **Hermes3D is the primary application and user interface**; AgentHQ provides the employee directory, local model routing, SQLite persistence, conversations and the runtime API.
 
 The intended daily experience is the native Hermes3D Studio at `http://localhost:3000/office`, connected to the AgentHQ FastAPI service at `http://127.0.0.1:8000`. The older Vite application in `frontend/` is retained as a legacy/reference dashboard while its remaining useful features are migrated. Do not launch it as a second product shell for normal use.
