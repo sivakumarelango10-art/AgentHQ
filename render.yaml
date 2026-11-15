@@ -35,6 +35,8 @@ services:
       # --- Cloudflare AI Provider Configuration ---
       - key: AGENTHQ_TASK_EXECUTION_ENABLED
         value: "true"
+      - key: AGENTHQ_WORKSPACE_STORAGE
+        value: s3
       - key: AI_PROVIDER
         value: cloudflare
       - key: CLOUDFLARE_MODEL
@@ -71,4 +73,8 @@ services:
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AGENTHQ_GITHUB_REPOSITORY
+        sync: false
+      - key: AGENTHQ_GITHUB_TOKEN
         sync: false

@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import re
 import sqlite3
 import threading
 import time
@@ -483,6 +484,12 @@ class TaskExecution(Base):
     started_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     approved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    github_repo: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    github_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    github_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    github_pr_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    github_pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    github_pr_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
     __table_args__ = (
         CheckConstraint("status IN ('queued', 'running', 'awaiting_approval', 'approved', 'rejected', 'failed', 'cancelled')", name="check_task_execution_status"),
         Index("idx_task_executions_task_created", task_id, created_at.desc()),
@@ -503,6 +510,12 @@ class TaskExecution(Base):
             "created_at": self.created_at, "updated_at": self.updated_at,
             "started_at": self.started_at, "finished_at": self.finished_at,
             "approved_at": self.approved_at,
+            "github_repo": self.github_repo,
+            "github_branch": self.github_branch,
+            "github_commit_sha": self.github_commit_sha,
+            "github_pr_url": self.github_pr_url,
+            "github_pr_number": self.github_pr_number,
+            "github_pr_state": self.github_pr_state,
         }
 
 
@@ -1897,6 +1910,40 @@ def approve_task_execution(execution_id: str, actor: str = "founder") -> dict[st
             note=f"Execution {record.id} approved by {actor or 'founder'}.",
             actor=(actor or "founder")[:80], at=now,
         ))
+        session.flush()
+        return record.to_dict()
+
+
+def attach_task_execution_github_pr(execution_id: str, details: dict[str, Any]) -> dict[str, Any] | None:
+    """Persist the single GitHub PR linked to a founder-approved execution."""
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if record.status != "approved":
+            raise ValueError("Only founder-approved executions can be published to GitHub.")
+        if record.github_pr_url:
+            return record.to_dict()
+        repository = str(details.get("github_repo") or "").strip()
+        branch = str(details.get("github_branch") or "").strip()
+        commit_sha = str(details.get("github_commit_sha") or "").strip()
+        pr_url = str(details.get("github_pr_url") or "").strip()
+        pr_number = int(details.get("github_pr_number") or 0)
+        pr_state = str(details.get("github_pr_state") or "open").strip()
+        if not repository or not branch or not pr_url or pr_number <= 0:
+            raise ValueError("GitHub PR metadata is incomplete.")
+        if len(repository) > 200 or len(branch) > 255 or len(commit_sha) > 64 or len(pr_url) > 500:
+            raise ValueError("GitHub PR metadata exceeds the allowed length.")
+        if not pr_url.startswith("https://github.com/") or not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+            raise ValueError("GitHub PR metadata failed validation.")
+        record.github_repo = repository
+        record.github_branch = branch
+        record.github_commit_sha = commit_sha
+        record.github_pr_url = pr_url
+        record.github_pr_number = pr_number
+        record.github_pr_state = pr_state[:20]
+        record.updated_at = now
         session.flush()
         return record.to_dict()
 
