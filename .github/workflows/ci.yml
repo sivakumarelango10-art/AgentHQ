@@ -2,9 +2,9 @@ name: AgentHQ CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/cloud-readiness]
   push:
-    branches: [main]
+    branches: [main, feat/phase4-approved-agent-workflow]
 
 permissions:
   contents: read

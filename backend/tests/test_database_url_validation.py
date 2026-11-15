@@ -7,8 +7,10 @@ from pathlib import Path
 
 # Ensure backend directory is in sys.path
 backend_dir = Path(__file__).resolve().parents[1]
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
+repo_root = backend_dir.parent
+for import_root in (repo_root, backend_dir):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 from app.db import validate_database_url, normalize_database_url, get_database_url
 
@@ -118,6 +120,7 @@ class TestDatabaseUrlValidation(unittest.TestCase):
 
         supervisor = UnifiedSupervisor()
         old_env = os.environ.get("DATABASE_URL")
+        old_environment = os.environ.get("ENVIRONMENT")
         try:
             # Set quoted URL in environment
             os.environ["DATABASE_URL"] = '"postgresql://user:pass@host/agenthq"'
@@ -139,6 +142,10 @@ class TestDatabaseUrlValidation(unittest.TestCase):
                 os.environ["DATABASE_URL"] = old_env
             else:
                 os.environ.pop("DATABASE_URL", None)
+            if old_environment is not None:
+                os.environ["ENVIRONMENT"] = old_environment
+            else:
+                os.environ.pop("ENVIRONMENT", None)
 
 
 if __name__ == "__main__":

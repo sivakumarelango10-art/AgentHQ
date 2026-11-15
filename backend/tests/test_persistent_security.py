@@ -253,7 +253,16 @@ class PersistentSecurityPhase2D1Tests(unittest.TestCase):
                 "--owner-hash", TEST_PASSWORD_HASH,
             ]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-            return proc.returncode, proc.stdout.strip()
+            output = proc.stdout.strip()
+            if proc.returncode != 0:
+                return proc.returncode, output or proc.stderr.strip()
+            if output.startswith("LIMITED:"):
+                return 429, output
+            if output == "REJECTED":
+                return 401, output
+            if output == "AUTHENTICATED":
+                return 200, output
+            return proc.returncode, output
 
         # Run 8 independent processes concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
