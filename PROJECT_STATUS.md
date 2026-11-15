@@ -23,6 +23,27 @@ Start both services with `E:\AgentHQ\start-agenthq-stack.ps1`. See `README.md` a
 - Conversation workspace with employee selection, recent chats, message history and local-model status.
 - Chat responses update the employee's working/idle status while the model is responding.
 
+## Phase 4A — Founder-approved task deliverables
+
+- A Founder can queue an execution for a task's assigned employee.
+- A background worker requests structured draft text/code files from the configured AI provider.
+- Drafts are stored in a private per-execution workspace and exposed only through authenticated API routes.
+- Python files receive AST parsing; JSON files receive JSON parsing. This is syntax validation only, not code execution or test execution.
+- The Founder can approve or reject the draft. Approval copies files to the private approved workspace and moves the parent task to `done`; rejection moves it to `needs_attention`.
+- Execution records and claim/approval/rejection task history are persisted in PostgreSQL/SQLite through Alembic migration `0006_task_execution_approval`.
+- No shell, arbitrary code execution, live web access, project-repository writes, deployment actions, or inter-agent delegation are enabled.
+- On Render Free, container storage is ephemeral. Configure `AGENTHQ_WORKSPACE_DIR` to a mounted persistent-disk path before depending on long-term artifact retention.
+
+### Phase 4A API
+- `POST /api/tasks/{task_id}/executions` — queue an assigned employee.
+- `GET /api/tasks/{task_id}/executions` and `GET /api/task-executions/{execution_id}` — inspect status.
+- `GET /api/task-executions/{execution_id}/artifacts` — list reviewable artifacts.
+- `GET /api/task-executions/{execution_id}/artifacts/{path}` — download a reviewable artifact.
+- `POST /api/task-executions/{execution_id}/approve` — approve and publish to the private approved workspace.
+- `POST /api/task-executions/{execution_id}/reject` — reject and request revisions.
+
+Enable the background worker with `AGENTHQ_TASK_EXECUTION_ENABLED=true`. The worker is disabled by default in local environments. Workspace defaults to `backend/data/agenthq-workspace`; use `AGENTHQ_WORKSPACE_DIR` to change it.
+
 ## Phase 3 scope and boundaries
 - AI employees can reason about requests, discuss plans, answer questions and draft text/code in chat.
 - The last 16 messages in a conversation are included as context.
@@ -31,9 +52,9 @@ Start both services with `E:\AgentHQ\start-agenthq-stack.ps1`. See `README.md` a
 - Chat requests have a bounded 180-second timeout and use a 4K context setting by default.
 
 Not implemented yet:
-- Automatic task claiming, execution, completion, retries or progress reporting.
+- Automatic code execution, test-suite execution, terminal tools, web research, project-repository writes, or deployments.
 - Agent-to-agent delegation and autonomous scheduling.
-- Sandboxed file tools, terminal tools, approvals and audit logs.
+- A Hermes3D approval/review UI for the new Phase 4A API (API endpoints are available; visual integration is a follow-up).
 - Live web research or access to local project files.
 - Rigged character models and task-driven walking/typing animations.
 - Conversation search, deletion, export and configurable memory management.

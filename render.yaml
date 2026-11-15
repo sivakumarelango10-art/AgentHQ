@@ -1,0 +1,74 @@
+# ==============================================================================
+# Render Blueprint Specification for AgentHQ + Hermes3D Unified Stack
+# Instance Type: Free Tier (512 MB RAM, 0.1 CPU)
+# Region: Singapore (ap-southeast)
+# ==============================================================================
+
+services:
+  - type: web
+    name: agenthq-hermes3d
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: feature/cloud-readiness
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      # --- Networking and Runtime Configuration ---
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      - key: ENVIRONMENT
+        value: production
+      - key: AGENTHQ_INTERNAL_URL
+        value: http://127.0.0.1:8000
+      - key: AGENTHQ_URL
+        value: http://127.0.0.1:8000
+      - key: AUTH_ENFORCED
+        value: "true"
+
+      # --- Cloudflare AI Provider Configuration ---
+      - key: AGENTHQ_TASK_EXECUTION_ENABLED
+        value: "true"
+      - key: AI_PROVIDER
+        value: cloudflare
+      - key: CLOUDFLARE_MODEL
+        value: "@cf/qwen/qwen3.8-27b"
+      - key: CLOUDFLARE_DAILY_NEURON_LIMIT
+        value: "8500"
+
+      # --- S3 Storage Bucket Configuration ---
+      - key: AWS_REGION
+        value: ap-southeast-1
+      - key: AWS_S3_BUCKET
+        value: assets
+
+      # ========================================================================
+      # Secret Environment Variables (Configured via Render Dashboard)
+      # DO NOT hardcode secrets in version control.
+      # ========================================================================
+      - key: DATABASE_URL
+        sync: false
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: STUDIO_ACCESS_TOKEN
+        generateValue: true
+      - key: SESSION_SECRET
+        sync: false
+      - key: RUNTIME_API_TOKEN
+        sync: false
+      - key: STUDIO_PASSWORD_HASH
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false

@@ -1,12 +1,25 @@
 node_modules/
 dist/
 .venv/
+backend/.venv/
 __pycache__/
 *.py[cod]
+
+# Environment files
 .env
-*.sqlite3
-.DS_Store
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Database files
 backend/data/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite3
+
+.DS_Store
+*.bak
+*.bak*

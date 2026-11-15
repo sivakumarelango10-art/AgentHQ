@@ -11,7 +11,7 @@ class DatabaseSeedTests(unittest.TestCase):
     def test_fresh_database_contains_the_canonical_seven_employees(self):
         with tempfile.TemporaryDirectory() as directory:
             database_file = Path(directory) / "agenthq-test.db"
-            with patch.dict(os.environ, {"AGENTHQ_DB_PATH": str(database_file)}):
+            with patch.dict(os.environ, {"AGENTHQ_DB_PATH": str(database_file), "DATABASE_URL": ""}):
                 db.init_db()
                 first = db.list_agents()
 
