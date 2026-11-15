@@ -491,9 +491,7 @@ class TaskExecution(Base):
     github_pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     github_pr_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
-    retry_of_execution_id: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("task_executions.id", ondelete="SET NULL"), nullable=True
-    )
+    retry_of_execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_heartbeat_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     __table_args__ = (

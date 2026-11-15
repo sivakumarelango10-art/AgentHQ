@@ -23,14 +23,11 @@ def upgrade() -> None:
         "task_executions",
         sa.Column("attempt_number", sa.Integer(), nullable=False, server_default="1"),
     )
+    # Keep this as a lineage pointer instead of a self-FK: SQLite cannot add
+    # the FK constraint through ALTER TABLE in this migration path.
     op.add_column(
         "task_executions",
-        sa.Column(
-            "retry_of_execution_id",
-            sa.String(length=64),
-            sa.ForeignKey("task_executions.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
+        sa.Column("retry_of_execution_id", sa.String(length=64), nullable=True),
     )
     op.add_column("task_executions", sa.Column("last_heartbeat_at", sa.String(length=40), nullable=True))
     op.add_column("task_executions", sa.Column("lease_expires_at", sa.String(length=40), nullable=True))
