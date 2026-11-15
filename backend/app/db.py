@@ -490,10 +490,15 @@ class TaskExecution(Base):
     github_pr_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     github_pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     github_pr_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    retry_of_execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_heartbeat_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     __table_args__ = (
         CheckConstraint("status IN ('queued', 'running', 'awaiting_approval', 'approved', 'rejected', 'failed', 'cancelled')", name="check_task_execution_status"),
         Index("idx_task_executions_task_created", task_id, created_at.desc()),
         Index("idx_task_executions_status_created", status, created_at),
+        Index("idx_task_executions_lease", status, lease_expires_at),
     )
     def to_dict(self) -> dict[str, Any]:
         try:
@@ -516,6 +521,10 @@ class TaskExecution(Base):
             "github_pr_url": self.github_pr_url,
             "github_pr_number": self.github_pr_number,
             "github_pr_state": self.github_pr_state,
+            "attempt_number": self.attempt_number,
+            "retry_of_execution_id": self.retry_of_execution_id,
+            "last_heartbeat_at": self.last_heartbeat_at,
+            "lease_expires_at": self.lease_expires_at,
         }
 
 
@@ -1754,9 +1763,97 @@ def create_task_execution(task_id: str, instructions: str = "", actor: str = "fo
             id=str(uuid4()), task_id=task.id, agent_id=task.assigned_agent_id,
             status="queued", instructions=(instructions or "").strip(),
             artifacts_json="[]", requested_by=(actor or "founder")[:80],
+            attempt_number=1, retry_of_execution_id=None,
             created_at=now, updated_at=now,
         )
         session.add(record)
+        session.flush()
+        return record.to_dict()
+
+
+def retry_task_execution(
+    execution_id: str,
+    instructions: str | None = None,
+    actor: str = "founder",
+    max_attempts: int = 5,
+) -> dict[str, Any]:
+    """Create a new, auditable attempt from a failed or rejected execution."""
+    now = utc_now()
+    engine = get_engine()
+    with get_session(immediate=True) as session:
+        previous = session.get(TaskExecution, execution_id)
+        if previous is None:
+            raise ValueError("Execution not found.")
+        if previous.status not in {"failed", "rejected"}:
+            raise ValueError("Only failed or rejected executions can be retried.")
+
+        task_stmt = select(Task).where(Task.id == previous.task_id)
+        if engine.dialect.name == "postgresql":
+            task_stmt = task_stmt.with_for_update()
+        task = session.scalars(task_stmt).first()
+        if task is None:
+            raise ValueError("The parent task no longer exists.")
+        if task.status in {"done", "cancelled"}:
+            raise ValueError("Completed or cancelled tasks cannot be retried.")
+        if not task.assigned_agent_id:
+            raise ValueError("Assign this task to an employee before requesting a retry.")
+        agent = session.get(Agent, task.assigned_agent_id)
+        if agent is None:
+            raise ValueError("The selected employee does not exist.")
+
+        active = session.scalars(select(TaskExecution).where(
+            TaskExecution.task_id == task.id,
+            TaskExecution.status.in_(("queued", "running", "awaiting_approval")),
+        )).first()
+        if active is not None:
+            raise ValueError("This task already has an active execution.")
+
+        latest_attempt = session.scalar(
+            select(func.max(TaskExecution.attempt_number)).where(TaskExecution.task_id == task.id)
+        ) or 1
+        next_attempt = int(latest_attempt) + 1
+        attempt_limit = max(1, min(int(max_attempts), 10))
+        if next_attempt > attempt_limit:
+            raise ValueError(
+                f"This task has reached the maximum of {attempt_limit} execution attempts. Create a new task to continue."
+            )
+
+        base_instructions = (instructions or previous.instructions or "").strip()
+        feedback = (previous.rejection_note or previous.error or "").strip()
+        if feedback:
+            suffix = f"\n\nPrevious attempt feedback to address: {feedback[:1200]}"
+            base_instructions = (base_instructions[: max(0, 4000 - len(suffix))] + suffix).strip()
+
+        record = TaskExecution(
+            id=str(uuid4()),
+            task_id=task.id,
+            agent_id=task.assigned_agent_id,
+            status="queued",
+            instructions=base_instructions[:4000],
+            artifacts_json="[]",
+            requested_by=(actor or "founder")[:80],
+            attempt_number=next_attempt,
+            retry_of_execution_id=previous.id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(record)
+
+        old_status = task.status
+        task.version = (task.version or 1) + 1
+        task.updated_at = now
+        session.add(TaskAuditLog(
+            id=str(uuid4()),
+            task_id=task.id,
+            action="execution_retried",
+            from_status=old_status,
+            to_status=old_status,
+            from_agent_id=previous.agent_id,
+            to_agent_id=task.assigned_agent_id,
+            note=f"Execution {record.id} created as attempt {next_attempt}, retrying {previous.id}.",
+            actor=(actor or "founder")[:80],
+            at=now,
+        ))
         session.flush()
         return record.to_dict()
 
@@ -1773,8 +1870,71 @@ def list_task_executions(task_id: str) -> list[dict[str, Any]]:
         return [record.to_dict() for record in session.scalars(stmt).all()]
 
 
-def claim_next_task_execution() -> dict[str, Any] | None:
+def heartbeat_task_execution(execution_id: str, lease_seconds: int = 300) -> bool:
     now = utc_now()
+    duration = max(60, min(int(lease_seconds), 900))
+    lease_expires = (datetime.fromisoformat(now) + timedelta(seconds=duration)).isoformat()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None or record.status != "running":
+            return False
+        record.last_heartbeat_at = now
+        record.lease_expires_at = lease_expires
+        record.updated_at = now
+        session.flush()
+        return True
+
+
+def recover_stale_task_executions(now: str | None = None) -> list[dict[str, Any]]:
+    """Fail running attempts whose worker lease expired and move their tasks to attention."""
+    cutoff = now or utc_now()
+    recovered: list[dict[str, Any]] = []
+    with get_session(immediate=True) as session:
+        stale = session.scalars(
+            select(TaskExecution)
+            .where(
+                TaskExecution.status == "running",
+                TaskExecution.lease_expires_at.is_not(None),
+                TaskExecution.lease_expires_at <= cutoff,
+            )
+            .order_by(TaskExecution.lease_expires_at.asc())
+        ).all()
+        for record in stale:
+            record.status = "failed"
+            record.error = (
+                "Execution worker lease expired before this attempt completed. "
+                "Review the failure and retry it from the founder workspace."
+            )
+            record.finished_at = cutoff
+            record.updated_at = cutoff
+            record.lease_expires_at = None
+            task = session.get(Task, record.task_id)
+            if task is not None and task.status == "working":
+                old_status = task.status
+                task.status = "needs_attention"
+                task.version = (task.version or 1) + 1
+                task.updated_at = cutoff
+                session.add(TaskAuditLog(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    action="status_changed",
+                    from_status=old_status,
+                    to_status="needs_attention",
+                    from_agent_id=task.assigned_agent_id,
+                    to_agent_id=task.assigned_agent_id,
+                    note=f"Execution {record.id} worker lease expired; founder attention is required.",
+                    actor="agenthq-recovery",
+                    at=cutoff,
+                ))
+            recovered.append(record.to_dict())
+        session.flush()
+    return recovered
+
+
+def claim_next_task_execution(lease_seconds: int = 300) -> dict[str, Any] | None:
+    now = utc_now()
+    duration = max(60, min(int(lease_seconds), 900))
+    lease_expires = (datetime.fromisoformat(now) + timedelta(seconds=duration)).isoformat()
     engine = get_engine()
     with get_session(immediate=True) as session:
         stmt = select(TaskExecution).where(TaskExecution.status == "queued").order_by(TaskExecution.created_at.asc()).limit(1)
@@ -1820,6 +1980,8 @@ def claim_next_task_execution() -> dict[str, Any] | None:
             ))
         record.status = "running"
         record.started_at = now
+        record.last_heartbeat_at = now
+        record.lease_expires_at = lease_expires
         record.updated_at = now
         session.flush()
         return record.to_dict()
@@ -1847,6 +2009,8 @@ def finish_task_execution(execution_id: str, summary: str, artifacts: list[dict[
         record.error = None
         record.finished_at = now
         record.updated_at = now
+        record.lease_expires_at = None
+        record.last_heartbeat_at = now
         session.flush()
         return record.to_dict()
 
@@ -1863,6 +2027,7 @@ def fail_task_execution(execution_id: str, error: str) -> dict[str, Any] | None:
         record.error = (error or "Execution failed.")[:2000]
         record.finished_at = now
         record.updated_at = now
+        record.lease_expires_at = None
         task = session.get(Task, record.task_id)
         if task is not None and task.status == "working":
             old_status = task.status
@@ -1964,6 +2129,7 @@ def reject_task_execution(execution_id: str, actor: str = "founder", note: str =
         record.status = "rejected"
         record.rejection_note = (note or "Founder requested revisions.")[:5000]
         record.updated_at = now
+        record.lease_expires_at = None
         old_status = task.status
         task.status = "needs_attention"
         task.version = (task.version or 1) + 1
