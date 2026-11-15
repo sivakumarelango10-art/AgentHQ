@@ -49,15 +49,15 @@ def main() -> int:
     if is_limited:
         sys.stdout.write(f"LIMITED:{retry_after}\n")
         sys.stdout.flush()
-        return 429
+        return 0
     elif is_authenticated:
         sys.stdout.write("AUTHENTICATED\n")
         sys.stdout.flush()
-        return 200
+        return 0
     else:
         sys.stdout.write("REJECTED\n")
         sys.stdout.flush()
-        return 401
+        return 0
 
 
 if __name__ == "__main__":

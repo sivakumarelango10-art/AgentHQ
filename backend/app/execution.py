@@ -184,3 +184,12 @@ def remove_approved_workspace(execution_id: str) -> None:
     except ValueError:
         return
     shutil.rmtree(target, ignore_errors=True)
+
+def remove_draft_workspace(execution_id: str) -> None:
+    root = workspace_root()
+    target = (root / "pending" / execution_id).resolve()
+    try:
+        target.relative_to((root / "pending").resolve())
+    except ValueError:
+        return
+    shutil.rmtree(target, ignore_errors=True)

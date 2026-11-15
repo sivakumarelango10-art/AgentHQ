@@ -1687,6 +1687,18 @@ def cancel_task(
         task.version = (task.version or 1) + 1
         task.updated_at = now
 
+        active_executions = session.scalars(
+            select(TaskExecution).where(
+                TaskExecution.task_id == task.id,
+                TaskExecution.status.in_(("queued", "running", "awaiting_approval")),
+            )
+        ).all()
+        for execution_record in active_executions:
+            execution_record.status = "cancelled"
+            execution_record.error = "Parent task was cancelled."
+            execution_record.finished_at = now
+            execution_record.updated_at = now
+
         audit = TaskAuditLog(
             id=str(uuid4()),
             task_id=task.id,
@@ -1707,8 +1719,12 @@ def cancel_task(
 
 def create_task_execution(task_id: str, instructions: str = "", actor: str = "founder") -> dict[str, Any]:
     now = utc_now()
+    engine = get_engine()
     with get_session(immediate=True) as session:
-        task = session.get(Task, task_id)
+        task_stmt = select(Task).where(Task.id == task_id)
+        if engine.dialect.name == "postgresql":
+            task_stmt = task_stmt.with_for_update()
+        task = session.scalars(task_stmt).first()
         if task is None:
             raise ValueError("Task not found.")
         if not task.assigned_agent_id:
@@ -1804,6 +1820,14 @@ def finish_task_execution(execution_id: str, summary: str, artifacts: list[dict[
             return None
         if record.status != "running":
             raise ValueError("Only a running execution can submit deliverables for review.")
+        task = session.get(Task, record.task_id)
+        if task is None or task.status != "working":
+            record.status = "cancelled" if task is None or task.status == "cancelled" else "failed"
+            record.error = "The parent task changed state before deliverables were submitted."
+            record.finished_at = now
+            record.updated_at = now
+            session.flush()
+            return record.to_dict()
         record.status = "awaiting_approval"
         record.summary = (summary or "Draft deliverables are ready for review.")[:12000]
         record.artifacts_json = json.dumps(artifacts, ensure_ascii=False)

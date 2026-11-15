@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from starlette.testclient import TestClient
 
@@ -256,7 +256,8 @@ class Phase2EProductionVerificationTests(unittest.TestCase):
         session_headers = {"Cookie": f"{security.COOKIE_NAME}={session_cookie}"}
 
         # 2. Opens the 3D office (verifies state and health)
-        health_res = self.client.get("/health", headers=session_headers)
+        with patch("app.main.get_active_ai_status", new=AsyncMock(return_value=("cloudflare", True, "@cf/test-model"))):
+            health_res = self.client.get("/health", headers=session_headers)
         self.assertEqual(health_res.status_code, 200)
         self.assertEqual(health_res.json()["status"], "ok")
 

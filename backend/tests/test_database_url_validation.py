@@ -7,8 +7,10 @@ from pathlib import Path
 
 # Ensure backend directory is in sys.path
 backend_dir = Path(__file__).resolve().parents[1]
-if str(backend_dir) not in sys.path:
-    sys.path.insert(0, str(backend_dir))
+repo_root = backend_dir.parent
+for import_root in (repo_root, backend_dir):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 from app.db import validate_database_url, normalize_database_url, get_database_url
 

@@ -1334,15 +1334,17 @@ async def process_task_execution(execution_item: dict[str, Any]) -> None:
     prompt = (
         "Prepare draft deliverables for this AgentHQ task.\n"
         f"Title: {task['title']}\n"
-        f"Description: {str(task.get('description') or '')[:1800]}\n"
-        f"Founder instructions: {str(execution_item.get('instructions') or '')[:1800]}\n"
+        f"Description: {str(task.get('description') or '')[:1200]}\n"
+        f"Founder instructions: {str(execution_item.get('instructions') or '')[:1200]}\n"
         "Return the required JSON object. Do not say you executed code or tests."
     )
     try:
         result = await chat_with_agent(agent_id, ChatRequest(message=prompt), execution_mode=True)
         parsed = parse_execution_payload(str(result["assistant_message"]["content"]))
         manifest = execution_workspace.write_draft_artifacts(execution_id, parsed["files"])
-        db.finish_task_execution(execution_id, parsed["summary"], manifest)
+        completed = db.finish_task_execution(execution_id, parsed["summary"], manifest)
+        if completed is None or completed["status"] != "awaiting_approval":
+            execution_workspace.remove_draft_workspace(execution_id)
     except Exception as error:
         safe_error = str(error.detail) if isinstance(error, HTTPException) else str(error)
         db.fail_task_execution(execution_id, safe_error[:1800])

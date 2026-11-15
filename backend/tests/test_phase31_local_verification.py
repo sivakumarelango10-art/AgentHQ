@@ -32,8 +32,13 @@ class Phase31LocalProductionVerificationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.root_dir = Path(__file__).resolve().parents[2]
         cls.backend_dir = cls.root_dir / "backend"
-        cls.hermes_dir = Path("E:/Hermes3D").resolve()
-        cls.python_exe = cls.backend_dir / ".venv" / "Scripts" / "python.exe"
+        cls.test_db_url = os.getenv("TEST_DATABASE_URL")
+        if not cls.test_db_url:
+            raise unittest.SkipTest("Set TEST_DATABASE_URL to run the local production integration test.")
+        cls.hermes_dir = Path(os.getenv("HERMES3D_DIR") or (cls.root_dir / "hermes3d")).resolve()
+        if not (cls.hermes_dir / "server" / "index.js").is_file():
+            raise unittest.SkipTest("Set HERMES3D_DIR to a built Hermes3D checkout to run this integration test.")
+        cls.python_exe = Path(sys.executable)
 
         if str(cls.backend_dir) not in sys.path:
             sys.path.insert(0, str(cls.backend_dir))
@@ -42,7 +47,7 @@ class Phase31LocalProductionVerificationTests(unittest.TestCase):
         import dotenv
         dotenv.load_dotenv(str(cls.backend_dir / ".env"))
 
-        cls.db_url = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+        cls.db_url = cls.test_db_url
         cls.runtime_token = "test-runtime-token-phase31-prod-xyz-987"
         cls.session_secret = "test-session-secret-phase31-must-be-32bytes-long!"
         cls.studio_token = "test-studio-access-token-12345"
