@@ -30,6 +30,9 @@ class TaskExecutionTests(unittest.TestCase):
             "SESSION_SECRET": "test-task-execution-session-secret-long-enough",
             "AGENTHQ_TASK_EXECUTION_ENABLED": "false",
             "AGENTHQ_WORKSPACE_DIR": str(self.workspace),
+            "AGENTHQ_WORKSPACE_STORAGE": "local",
+            "AGENTHQ_GITHUB_REPOSITORY": "",
+            "AGENTHQ_GITHUB_TOKEN": "",
         })
         self.env.start()
         db.init_db()
@@ -134,6 +137,67 @@ class TaskExecutionTests(unittest.TestCase):
         self.assertEqual(payload["summary"], "Done")
         with self.assertRaises(ArtifactValidationError):
             parse_execution_payload("Here is your work.")
+
+    def test_10_github_pr_publishing_requires_approved_execution_and_configuration(self):
+        task_id = self._create_assigned_task()
+        created = self.client.post(
+            f"/api/tasks/{task_id}/executions",
+            headers=self.headers,
+            json={},
+        ).json()["item"]
+        denied = self.client.post(
+            f"/api/task-executions/{created['id']}/github-pr",
+            headers=self.headers,
+        )
+        self.assertEqual(denied.status_code, 409)
+        db.claim_next_task_execution()
+        manifest = write_draft_artifacts(
+            created["id"],
+            [{"path": "README.md", "content": "# Approved deliverable\\n"}],
+        )
+        db.finish_task_execution(created["id"], "Ready", manifest)
+        approved = self.client.post(
+            f"/api/task-executions/{created['id']}/approve",
+            headers=self.headers,
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        not_configured = self.client.post(
+            f"/api/task-executions/{created['id']}/github-pr",
+            headers=self.headers,
+        )
+        self.assertEqual(not_configured.status_code, 503)
+        self.assertIn("not configured", not_configured.json()["detail"].lower())
+
+    def test_11_github_pr_metadata_is_persisted_once(self):
+        task_id = self._create_assigned_task()
+        created = self.client.post(
+            f"/api/tasks/{task_id}/executions",
+            headers=self.headers,
+            json={},
+        ).json()["item"]
+        db.claim_next_task_execution()
+        manifest = write_draft_artifacts(
+            created["id"],
+            [{"path": "README.md", "content": "# Approved\\n"}],
+        )
+        db.finish_task_execution(created["id"], "Ready", manifest)
+        db.approve_task_execution(created["id"], actor="founder")
+        details = {
+            "github_repo": "example/project",
+            "github_branch": "agenthq/execution-123",
+            "github_commit_sha": "a" * 40,
+            "github_pr_url": "https://github.com/example/project/pull/12",
+            "github_pr_number": 12,
+            "github_pr_state": "open",
+        }
+        saved = db.attach_task_execution_github_pr(created["id"], details)
+        self.assertEqual(saved["github_pr_url"], details["github_pr_url"])
+        second = db.attach_task_execution_github_pr(
+            created["id"],
+            {**details, "github_pr_url": "https://github.com/example/project/pull/99", "github_pr_number": 99},
+        )
+        self.assertEqual(second["github_pr_url"], details["github_pr_url"])
+        self.assertEqual(second["github_pr_number"], 12)
 
 
 if __name__ == "__main__":

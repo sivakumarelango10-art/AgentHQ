@@ -920,7 +920,7 @@ async def download_task_execution_artifact(
     execution_id: str,
     artifact_path: str,
     auth: dict[str, Any] = Depends(security.require_runtime_auth),
-) -> FileResponse:
+) -> Response:
     item = db.get_task_execution(execution_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Execution not found.")
@@ -968,6 +968,7 @@ async def approve_task_execution(
     if approved is None:
         execution_workspace.remove_approved_workspace(execution_id)
         raise HTTPException(status_code=404, detail="Execution not found.")
+    execution_workspace.remove_draft_workspace(execution_id)
     return {
         "item": approved,
         "message": "Deliverables approved and copied to the private approved workspace. No code was executed or deployed.",
