@@ -112,6 +112,7 @@ async def create_review_pull_request(
     task_title: str,
     summary: str,
     artifacts: list[dict[str, Any]],
+    expected_commit_sha: str | None = None,
 ) -> dict[str, Any]:
     """Create a dedicated GitHub branch and PR; never writes to the base branch."""
     owner, repository_name, repository, token = _configuration()
@@ -140,6 +141,11 @@ async def create_review_pull_request(
         if isinstance(existing, list) and existing:
             pr = existing[0]
             head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+            existing_head_sha = str(head.get("sha") or "")
+            if expected_commit_sha and existing_head_sha.casefold() != expected_commit_sha.casefold():
+                raise GitHubIntegrationError(
+                    "The existing implementation pull request no longer points to the commit that passed isolated tests."
+                )
             return {
                 "github_repo": repository,
                 "github_branch": branch,
@@ -176,6 +182,10 @@ async def create_review_pull_request(
             commit_sha = str(branch_object.get("sha") or "") if isinstance(branch_object, dict) else ""
             if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
                 raise GitHubIntegrationError("GitHub returned an invalid execution branch commit.")
+            if expected_commit_sha and commit_sha.casefold() != expected_commit_sha.casefold():
+                raise GitHubIntegrationError(
+                    "The execution branch changed after isolated tests. Run the tests again before publishing."
+                )
         else:
             base_commit = await _request(client, "GET", f"/repos/{repository}/git/commits/{base_sha}")
             base_tree_sha = str((base_commit.get("tree") or {}).get("sha") or "")
@@ -258,6 +268,12 @@ async def create_review_pull_request(
                 pass
             raise
 
+        pr_head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+        pr_head_sha = str(pr_head.get("sha") or "")
+        if expected_commit_sha and pr_head_sha.casefold() != expected_commit_sha.casefold():
+            raise GitHubIntegrationError(
+                "The pull request head does not match the commit that passed isolated tests. No PR URL was accepted."
+            )
         return {
             "github_repo": repository,
             "github_branch": branch,

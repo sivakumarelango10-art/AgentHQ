@@ -494,6 +494,13 @@ class TaskExecution(Base):
     retry_of_execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_heartbeat_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     lease_expires_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    sandbox_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sandbox_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sandbox_profile: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    sandbox_status: Mapped[str] = mapped_column(String(20), nullable=False, default="not_run", server_default="not_run")
+    sandbox_target_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    sandbox_requested_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    sandbox_updated_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
     __table_args__ = (
         CheckConstraint("status IN ('queued', 'running', 'awaiting_approval', 'approved', 'rejected', 'failed', 'cancelled')", name="check_task_execution_status"),
         Index("idx_task_executions_task_created", task_id, created_at.desc()),
@@ -525,6 +532,13 @@ class TaskExecution(Base):
             "retry_of_execution_id": self.retry_of_execution_id,
             "last_heartbeat_at": self.last_heartbeat_at,
             "lease_expires_at": self.lease_expires_at,
+            "sandbox_branch": self.sandbox_branch,
+            "sandbox_commit_sha": self.sandbox_commit_sha,
+            "sandbox_profile": self.sandbox_profile,
+            "sandbox_status": self.sandbox_status,
+            "sandbox_target_url": self.sandbox_target_url,
+            "sandbox_requested_at": self.sandbox_requested_at,
+            "sandbox_updated_at": self.sandbox_updated_at,
         }
 
 
@@ -2075,6 +2089,80 @@ def approve_task_execution(execution_id: str, actor: str = "founder") -> dict[st
             note=f"Execution {record.id} approved by {actor or 'founder'}.",
             actor=(actor or "founder")[:80], at=now,
         ))
+        session.flush()
+        return record.to_dict()
+
+
+
+
+def attach_task_execution_sandbox_branch(execution_id: str, details: dict[str, Any]) -> dict[str, Any] | None:
+    """Persist the exact approved-artifact branch before isolated checks are dispatched."""
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if record.status != "approved":
+            raise ValueError("Only founder-approved executions can be sent to the isolated runner.")
+        if record.github_pr_url:
+            raise ValueError("This execution already has a GitHub pull request.")
+        repository = str(details.get("github_repo") or "").strip()
+        branch = str(details.get("sandbox_branch") or "").strip()
+        commit_sha = str(details.get("sandbox_commit_sha") or "").strip()
+        profile = str(details.get("sandbox_profile") or "auto").strip()
+        if (
+            not repository
+            or not branch
+            or len(repository) > 200
+            or len(branch) > 255
+            or not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha)
+            or profile not in {"auto", "node", "python"}
+        ):
+            raise ValueError("Sandbox branch metadata failed validation.")
+        if record.sandbox_commit_sha and record.sandbox_commit_sha != commit_sha:
+            raise ValueError("This execution is already linked to a different sandbox commit.")
+        record.github_repo = repository
+        record.sandbox_branch = branch
+        record.sandbox_commit_sha = commit_sha
+        record.sandbox_profile = profile
+        record.sandbox_status = "queued"
+        record.sandbox_target_url = None
+        record.sandbox_requested_at = now
+        record.sandbox_updated_at = now
+        record.updated_at = now
+        session.flush()
+        return record.to_dict()
+
+
+def update_task_execution_sandbox_status(
+    execution_id: str,
+    sandbox_status: str,
+    target_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Persist a trusted GitHub commit status for the linked sandbox commit."""
+    allowed = {"queued", "pending", "success", "failure", "error"}
+    state = (sandbox_status or "").strip().casefold()
+    if state not in allowed:
+        raise ValueError("Sandbox status is invalid.")
+    safe_url = (target_url or "").strip() or None
+    if safe_url and (
+        not safe_url.startswith("https://github.com/")
+        or len(safe_url) > 500
+        or not re.fullmatch(r"https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+", safe_url)
+    ):
+        raise ValueError("Sandbox result URL failed validation.")
+    now = utc_now()
+    with get_session(immediate=True) as session:
+        record = session.get(TaskExecution, execution_id)
+        if record is None:
+            return None
+        if not record.sandbox_commit_sha:
+            raise ValueError("This execution has no isolated sandbox commit.")
+        record.sandbox_status = state
+        if safe_url:
+            record.sandbox_target_url = safe_url
+        record.sandbox_updated_at = now
+        record.updated_at = now
         session.flush()
         return record.to_dict()
 
