@@ -29,7 +29,7 @@ services:
         value: http://127.0.0.1:8000
       - key: AGENTHQ_URL
         value: http://127.0.0.1:8000
-      - key: AGENTHQ_ENFORCE_AUTH
+      - key: AUTH_ENFORCED
         value: "true"
 
       # --- Cloudflare AI Provider Configuration ---
@@ -57,14 +57,10 @@ services:
       - key: CLOUDFLARE_API_TOKEN
         sync: false
       - key: STUDIO_ACCESS_TOKEN
-        sync: false
+        generateValue: true
       - key: SESSION_SECRET
         sync: false
       - key: RUNTIME_API_TOKEN
-        sync: false
-      - key: OWNER_USERNAME
-        sync: false
-      - key: OWNER_PASSWORD_HASH
         sync: false
       - key: STUDIO_PASSWORD_HASH
         sync: false
@@ -74,4 +70,3 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
-
