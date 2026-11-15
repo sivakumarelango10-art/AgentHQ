@@ -15,9 +15,9 @@ Phase 5A moves project test execution out of the public AgentHQ/Render web proce
 
 ## Supported test profiles
 
-- \`auto\`: selects Node.js when \`package.json\` exists, otherwise Python when \`pyproject.toml\` or \`requirements.txt\` exists.
+- \`auto\`: selects Node.js when \`package.json\` exists, otherwise Python when \`requirements.txt\` exists.
 - \`node\`: requires \`package.json\` plus \`package-lock.json\` or \`npm-shrinkwrap.json\`; runs \`npm ci\`, \`npm test\`, and optional \`typecheck\` and \`build\` scripts.
-- \`python\`: requires \`pyproject.toml\` or \`requirements.txt\`; installs pytest and listed requirements, compiles Python files, then runs \`pytest\`.
+- \`python\`: requires \`requirements.txt\`; installs pytest and listed requirements, compiles Python files, then runs \`pytest\`.
 
 The workflow has a 15-minute job timeout. If a project uses a different test command or dependency manager, a later phase will add explicitly reviewed repository profiles rather than accepting arbitrary shell commands from the model.
 

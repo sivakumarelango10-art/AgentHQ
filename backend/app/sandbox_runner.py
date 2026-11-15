@@ -348,8 +348,9 @@ async def dispatch_sandbox_run(
 ) -> dict[str, Any]:
     if not _MAX_EXECUTION_ID.fullmatch(execution_id or ""):
         raise github_integration.GitHubIntegrationError("Execution identifier is invalid.")
-    if not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", target_ref or "") or ".." in target_ref.split("/"):
-        raise github_integration.GitHubIntegrationError("Sandbox target branch is invalid.")
+    expected_branch = f"agenthq/execution-{hashlib.sha256(execution_id.encode('utf-8')).hexdigest()[:16]}"
+    if target_ref != expected_branch:
+        raise github_integration.GitHubIntegrationError("Sandbox target branch does not match this execution.")
     if not _SHA.fullmatch(target_sha or ""):
         raise github_integration.GitHubIntegrationError("Sandbox target commit is invalid.")
     if profile not in {"auto", "node", "python"}:

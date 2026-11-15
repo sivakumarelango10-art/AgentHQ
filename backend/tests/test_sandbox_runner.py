@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import unittest
@@ -155,25 +156,34 @@ class SandboxRunnerTests(unittest.TestCase):
         self.assertEqual(status["target_url"], "https://github.com/example/project/actions/runs/12345")
         self.assertFalse(any(method == "PATCH" and path.endswith("/git/refs/heads/main") for method, path in calls))
 
-    def test_rejects_invalid_sandbox_ref_sha_and_profile(self):
+    def test_rejects_invalid_sandbox_ref_sha_profile_and_execution_mismatch(self):
+        execution_id = "execution-123"
+        expected_branch = "agenthq/execution-" + hashlib.sha256(execution_id.encode()).hexdigest()[:16]
         with self.assertRaises(Exception):
             asyncio.run(sandbox_runner.dispatch_sandbox_run(
-                execution_id="execution-123",
+                execution_id=execution_id,
                 target_ref="../main",
                 target_sha="a" * 40,
                 profile="node",
             ))
         with self.assertRaises(Exception):
             asyncio.run(sandbox_runner.dispatch_sandbox_run(
-                execution_id="execution-123",
-                target_ref="agenthq/execution-123",
+                execution_id=execution_id,
+                target_ref="agenthq/execution-0000000000000000",
+                target_sha="a" * 40,
+                profile="node",
+            ))
+        with self.assertRaises(Exception):
+            asyncio.run(sandbox_runner.dispatch_sandbox_run(
+                execution_id=execution_id,
+                target_ref=expected_branch,
                 target_sha="not-a-sha",
                 profile="node",
             ))
         with self.assertRaises(Exception):
             asyncio.run(sandbox_runner.dispatch_sandbox_run(
-                execution_id="execution-123",
-                target_ref="agenthq/execution-123",
+                execution_id=execution_id,
+                target_ref=expected_branch,
                 target_sha="a" * 40,
                 profile="shell",
             ))

@@ -69,6 +69,7 @@ jobs:
       contents: read
     env:
       CI: "true"
+      EXECUTION_ID: ${{ inputs.execution_id }}
       TARGET_REF: ${{ inputs.target_ref }}
       TARGET_SHA: ${{ inputs.target_sha }}
       REQUESTED_PROFILE: ${{ inputs.profile }}
@@ -77,9 +78,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$TARGET_REF" =~ ^[A-Za-z0-9._/-]{1,200}$ ]] || { echo "Invalid target ref"; exit 1; }
-          [[ "$TARGET_REF" != *".."* ]] || { echo "Invalid target ref"; exit 1; }
-          [[ "$TARGET_REF" != /* ]] || { echo "Invalid target ref"; exit 1; }
+          [[ "$EXECUTION_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || { echo "Invalid execution ID"; exit 1; }
+          expected_suffix="$(printf "%s" "$EXECUTION_ID" | sha256sum | cut -c1-16)"
+          expected_ref="agenthq/execution-${expected_suffix}"
+          [[ "$TARGET_REF" == "$expected_ref" ]] || { echo "Target branch does not match execution ID"; exit 1; }
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid target SHA"; exit 1; }
           [[ "$REQUESTED_PROFILE" =~ ^(auto|node|python)$ ]] || { echo "Invalid project profile"; exit 1; }
 
@@ -109,7 +111,7 @@ jobs:
           if [[ "$profile" == "auto" ]]; then
             if [[ -f package.json ]]; then
               profile="node"
-            elif [[ -f pyproject.toml || -f requirements.txt ]]; then
+            elif [[ -f requirements.txt ]]; then
               profile="python"
             else
               echo "No supported Node.js or Python project manifest was found."
@@ -120,8 +122,8 @@ jobs:
             echo "Node.js profile requires package.json."
             exit 1
           fi
-          if [[ "$profile" == "python" && ! -f pyproject.toml && ! -f requirements.txt ]]; then
-            echo "Python profile requires pyproject.toml or requirements.txt."
+          if [[ "$profile" == "python" && ! -f requirements.txt ]]; then
+            echo "Python profile requires requirements.txt."
             exit 1
           fi
           echo "selected=$profile" >> "$GITHUB_OUTPUT"
