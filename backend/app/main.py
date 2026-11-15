@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import execution as execution_workspace
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import db, security, github_integration
+from . import db, security, github_integration, sandbox_runner
 from .providers import (
     AICompletionResult,
     AIProviderAuthError,
@@ -1009,6 +1009,155 @@ async def approve_task_execution(
     }
 
 
+@app.get("/api/github-runner/status")
+async def get_github_runner_status(
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    """Return the redacted configuration and installation state of the isolated runner."""
+    try:
+        item = await sandbox_runner.get_runner_workflow_status()
+    except github_integration.GitHubIntegrationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except github_integration.GitHubIntegrationError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {"item": item}
+
+
+@app.post("/api/github-runner/install")
+async def post_github_runner_install(
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    """Open a founder-reviewable PR to install the isolated runner in the configured repository."""
+    try:
+        item = await sandbox_runner.install_runner_workflow()
+    except github_integration.GitHubIntegrationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except github_integration.GitHubIntegrationError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {"item": item, "message": item.get("message", "Runner setup status loaded.")}
+
+
+@app.post("/api/task-executions/{execution_id}/sandbox-run", status_code=202)
+async def post_task_execution_sandbox_run(
+    execution_id: str,
+    auth: dict[str, Any] = Depends(security.require_founder_auth),
+) -> dict[str, Any]:
+    """Prepare approved deliverables on a private branch and dispatch isolated repository checks."""
+    item = db.get_task_execution(execution_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    if item["status"] != "approved":
+        raise HTTPException(status_code=409, detail="Only founder-approved executions can be sent to the isolated runner.")
+    if item.get("github_pr_url"):
+        raise HTTPException(status_code=409, detail="This execution already has a GitHub pull request.")
+    if item.get("sandbox_status") in {"queued", "pending"}:
+        return {"item": item, "message": "Isolated repository checks are already in progress."}
+    if item.get("sandbox_status") == "success":
+        return {"item": item, "message": "Isolated repository checks already passed for this approved commit."}
+
+    task = db.get_task(item["task_id"])
+    if task is None:
+        raise HTTPException(status_code=404, detail="Parent task not found.")
+
+    try:
+        runner_status = await sandbox_runner.get_runner_workflow_status()
+        if not runner_status["installed"]:
+            setup_pr_url = runner_status.get("setup_pr_url")
+            detail = (
+                f"Merge the isolated-runner setup pull request first: {setup_pr_url}"
+                if setup_pr_url
+                else "Install the isolated-runner workflow in the configured GitHub repository first."
+            )
+            raise sandbox_runner.SandboxWorkflowNotInstalled(detail)
+
+        artifacts = []
+        for artifact in item["artifacts"]:
+            payload = execution_workspace.read_artifact_bytes(
+                execution_id,
+                artifact["path"],
+                item["artifacts"],
+                approved=True,
+            )
+            artifacts.append({"path": artifact["path"], "content": payload.decode("utf-8")})
+
+        branch_details = await sandbox_runner.prepare_execution_branch(
+            execution_id=execution_id,
+            task_title=task["title"],
+            artifacts=artifacts,
+        )
+        saved = db.attach_task_execution_sandbox_branch(execution_id, branch_details)
+        if saved is None:
+            raise HTTPException(status_code=404, detail="Execution not found.")
+
+        previous_result = await sandbox_runner.get_commit_sandbox_status(
+            str(saved["sandbox_commit_sha"])
+        )
+        if previous_result and previous_result["status"] in {"pending", "success"}:
+            updated = db.update_task_execution_sandbox_status(
+                execution_id,
+                str(previous_result["status"]),
+                target_url=previous_result.get("target_url"),
+            )
+            message = (
+                "Isolated repository checks already passed for this approved commit."
+                if previous_result["status"] == "success"
+                else "Isolated repository checks are already running."
+            )
+            return {"item": updated or saved, "message": message}
+
+        dispatched = await sandbox_runner.dispatch_sandbox_run(
+            execution_id=execution_id,
+            target_ref=str(saved["sandbox_branch"]),
+            target_sha=str(saved["sandbox_commit_sha"]),
+            profile=str(saved.get("sandbox_profile") or "auto"),
+        )
+        updated = db.update_task_execution_sandbox_status(execution_id, "pending")
+    except sandbox_runner.SandboxWorkflowNotInstalled as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except github_integration.GitHubIntegrationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except github_integration.GitHubIntegrationError as error:
+        try:
+            if db.get_task_execution(execution_id).get("sandbox_commit_sha"):
+                db.update_task_execution_sandbox_status(execution_id, "error")
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except (UnicodeDecodeError, execution_workspace.ArtifactValidationError) as error:
+        raise HTTPException(status_code=409, detail="An approved artifact failed its integrity or text validation check.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+    return {"item": updated or saved, "message": dispatched["message"]}
+
+
+@app.get("/api/task-executions/{execution_id}/sandbox-run")
+async def get_task_execution_sandbox_run(
+    execution_id: str,
+    auth: dict[str, Any] = Depends(security.require_runtime_auth),
+) -> dict[str, Any]:
+    """Refresh the isolated-runner result from the target repository's commit status."""
+    item = db.get_task_execution(execution_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    commit_sha = item.get("sandbox_commit_sha")
+    if not commit_sha:
+        return {"item": item, "message": "No isolated repository run has been requested."}
+    try:
+        result = await sandbox_runner.get_commit_sandbox_status(str(commit_sha))
+        if result is not None:
+            item = db.update_task_execution_sandbox_status(
+                execution_id,
+                str(result["status"]),
+                target_url=result.get("target_url"),
+            ) or item
+    except github_integration.GitHubIntegrationConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except github_integration.GitHubIntegrationError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {"item": item}
+
+
 @app.post("/api/task-executions/{execution_id}/github-pr")
 async def post_task_execution_github_pr(
     execution_id: str,
@@ -1021,6 +1170,11 @@ async def post_task_execution_github_pr(
         raise HTTPException(status_code=409, detail="Only founder-approved executions can be published to GitHub.")
     if item.get("github_pr_url"):
         return {"item": item, "message": "This execution already has a GitHub pull request."}
+    if item.get("sandbox_status") != "success":
+        raise HTTPException(
+            status_code=409,
+            detail="Run the isolated repository tests and wait for a successful result before creating a GitHub pull request.",
+        )
     task = db.get_task(item["task_id"])
     if task is None:
         raise HTTPException(status_code=404, detail="Parent task not found.")

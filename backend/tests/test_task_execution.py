@@ -165,8 +165,8 @@ class TaskExecutionTests(unittest.TestCase):
             f"/api/task-executions/{created['id']}/github-pr",
             headers=self.headers,
         )
-        self.assertEqual(not_configured.status_code, 503)
-        self.assertIn("not configured", not_configured.json()["detail"].lower())
+        self.assertEqual(not_configured.status_code, 409)
+        self.assertIn("isolated repository tests", not_configured.json()["detail"].lower())
 
     def test_11_github_pr_metadata_is_persisted_once(self):
         task_id = self._create_assigned_task()
@@ -294,6 +294,57 @@ class TaskExecutionTests(unittest.TestCase):
 
         db.fail_task_execution(created["id"], "Test failure.")
         self.assertFalse(db.heartbeat_task_execution(created["id"], lease_seconds=120))
+
+
+    def test_15_sandbox_metadata_requires_approved_execution_and_valid_status_url(self):
+        task_id = self._create_assigned_task()
+        created = self.client.post(
+            f"/api/tasks/{task_id}/executions",
+            headers=self.headers,
+            json={},
+        ).json()["item"]
+        details = {
+            "github_repo": "example/project",
+            "sandbox_branch": "agenthq/execution-1234567890abcdef",
+            "sandbox_commit_sha": "a" * 40,
+            "sandbox_profile": "node",
+        }
+
+        with self.assertRaises(ValueError):
+            db.attach_task_execution_sandbox_branch(created["id"], details)
+
+        db.claim_next_task_execution()
+        manifest = write_draft_artifacts(
+            created["id"],
+            [{"path": "README.md", "content": "# Approved sandbox input\n"}],
+        )
+        db.finish_task_execution(created["id"], "Ready for isolated tests", manifest)
+        db.approve_task_execution(created["id"], actor="founder")
+
+        saved = db.attach_task_execution_sandbox_branch(created["id"], details)
+        self.assertEqual(saved["sandbox_status"], "queued")
+        self.assertEqual(saved["sandbox_commit_sha"], "a" * 40)
+
+        pending = db.update_task_execution_sandbox_status(
+            created["id"],
+            "pending",
+            target_url="https://github.com/example/project/actions/runs/12345",
+        )
+        self.assertEqual(pending["sandbox_status"], "pending")
+        self.assertEqual(
+            pending["sandbox_target_url"],
+            "https://github.com/example/project/actions/runs/12345",
+        )
+
+        passed = db.update_task_execution_sandbox_status(created["id"], "success")
+        self.assertEqual(passed["sandbox_status"], "success")
+
+        with self.assertRaises(ValueError):
+            db.update_task_execution_sandbox_status(
+                created["id"],
+                "success",
+                target_url="https://attacker.invalid/result",
+            )
 
 
 if __name__ == "__main__":
