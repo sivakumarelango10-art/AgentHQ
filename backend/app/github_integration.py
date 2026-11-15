@@ -75,6 +75,7 @@ async def _request(
     path: str,
     payload: dict[str, Any] | None = None,
     params: dict[str, str] | None = None,
+    allow_not_found: bool = False,
 ) -> Any:
     try:
         response = await client.request(method, path, json=payload, params=params)
@@ -83,6 +84,8 @@ async def _request(
     except httpx.HTTPError as error:
         raise GitHubIntegrationError("GitHub could not be reached from AgentHQ.") from error
 
+    if allow_not_found and response.status_code == 404:
+        return None
     if response.status_code < 200 or response.status_code >= 300:
         message = ""
         try:
@@ -157,55 +160,70 @@ async def create_review_pull_request(
         if not re.fullmatch(r"[0-9a-fA-F]{40}", base_sha):
             raise GitHubIntegrationError("GitHub returned an invalid base branch commit.")
 
-        base_commit = await _request(client, "GET", f"/repos/{repository}/git/commits/{base_sha}")
-        base_tree_sha = str((base_commit.get("tree") or {}).get("sha") or "")
-        if not re.fullmatch(r"[0-9a-fA-F]{40}", base_tree_sha):
-            raise GitHubIntegrationError("GitHub returned an invalid base tree.")
+        # A retry may find a branch created by a previous request that timed out
+        # before the PR response was persisted. Reuse that dedicated branch.
+        encoded_branch = quote(branch, safe="")
+        existing_branch = await _request(
+            client,
+            "GET",
+            f"/repos/{repository}/git/ref/heads/{encoded_branch}",
+            allow_not_found=True,
+        )
+        if existing_branch is not None:
+            branch_object = existing_branch.get("object") if isinstance(existing_branch, dict) else None
+            commit_sha = str(branch_object.get("sha") or "") if isinstance(branch_object, dict) else ""
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+                raise GitHubIntegrationError("GitHub returned an invalid execution branch commit.")
+        else:
+            base_commit = await _request(client, "GET", f"/repos/{repository}/git/commits/{base_sha}")
+            base_tree_sha = str((base_commit.get("tree") or {}).get("sha") or "")
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", base_tree_sha):
+                raise GitHubIntegrationError("GitHub returned an invalid base tree.")
 
-        tree_items: list[dict[str, str]] = []
-        for path, content in files:
-            blob = await _request(
+            tree_items: list[dict[str, str]] = []
+            for path, content in files:
+                blob = await _request(
+                    client,
+                    "POST",
+                    f"/repos/{repository}/git/blobs",
+                    {"content": content, "encoding": "utf-8"},
+                )
+                blob_sha = str(blob.get("sha") or "")
+                if not re.fullmatch(r"[0-9a-fA-F]{40}", blob_sha):
+                    raise GitHubIntegrationError("GitHub returned an invalid artifact blob identifier.")
+                tree_items.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+
+            tree = await _request(
                 client,
                 "POST",
-                f"/repos/{repository}/git/blobs",
-                {"content": content, "encoding": "utf-8"},
+                f"/repos/{repository}/git/trees",
+                {"base_tree": base_tree_sha, "tree": tree_items},
             )
-            blob_sha = str(blob.get("sha") or "")
-            if not re.fullmatch(r"[0-9a-fA-F]{40}", blob_sha):
-                raise GitHubIntegrationError("GitHub returned an invalid artifact blob identifier.")
-            tree_items.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+            new_tree_sha = str(tree.get("sha") or "")
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", new_tree_sha):
+                raise GitHubIntegrationError("GitHub returned an invalid commit tree.")
 
-        tree = await _request(
-            client,
-            "POST",
-            f"/repos/{repository}/git/trees",
-            {"base_tree": base_tree_sha, "tree": tree_items},
-        )
-        new_tree_sha = str(tree.get("sha") or "")
-        if not re.fullmatch(r"[0-9a-fA-F]{40}", new_tree_sha):
-            raise GitHubIntegrationError("GitHub returned an invalid commit tree.")
+            safe_title = " ".join((task_title or "AgentHQ task").split())[:160]
+            commit = await _request(
+                client,
+                "POST",
+                f"/repos/{repository}/git/commits",
+                {
+                    "message": f"[AgentHQ] {safe_title} (execution {execution_id[:8]})",
+                    "tree": new_tree_sha,
+                    "parents": [base_sha],
+                },
+            )
+            commit_sha = str(commit.get("sha") or "")
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+                raise GitHubIntegrationError("GitHub returned an invalid commit identifier.")
 
-        safe_title = " ".join((task_title or "AgentHQ task").split())[:160]
-        commit = await _request(
-            client,
-            "POST",
-            f"/repos/{repository}/git/commits",
-            {
-                "message": f"[AgentHQ] {safe_title} (execution {execution_id[:8]})",
-                "tree": new_tree_sha,
-                "parents": [base_sha],
-            },
-        )
-        commit_sha = str(commit.get("sha") or "")
-        if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
-            raise GitHubIntegrationError("GitHub returned an invalid commit identifier.")
-
-        await _request(
-            client,
-            "POST",
-            f"/repos/{repository}/git/refs",
-            {"ref": f"refs/heads/{branch}", "sha": commit_sha},
-        )
+            await _request(
+                client,
+                "POST",
+                f"/repos/{repository}/git/refs",
+                {"ref": f"refs/heads/{branch}", "sha": commit_sha},
+            )
 
         file_list = "\n".join(f"- `{path}`" for path, _ in files)
         body = (
