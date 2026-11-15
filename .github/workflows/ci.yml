@@ -28,6 +28,44 @@ jobs:
           PYTHONPATH: .
         run: python -m unittest discover -s tests -v
 
+  hermes3d-integration:
+    name: Hermes3D submodule typecheck, tests, and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout AgentHQ and Hermes3D
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hermes3d/package-lock.json
+
+      - name: Install Hermes3D dependencies
+        working-directory: hermes3d
+        run: npm ci
+
+      - name: Hermes3D typecheck
+        working-directory: hermes3d
+        run: npm run typecheck
+
+      - name: Hermes3D unit tests
+        working-directory: hermes3d
+        run: npm run test -- --run
+
+      - name: Hermes3D production build
+        working-directory: hermes3d
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NODE_ENV: production
+          RUNTIME_API_TOKEN: ci-runtime-token
+          AGENTHQ_URL: http://127.0.0.1:8000
+        run: npm run build
+
   frontend-build:
     name: Frontend typecheck and build
     runs-on: ubuntu-latest
