@@ -34,7 +34,9 @@ from sqlalchemy import (
     text,
     update,
 )
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.engine import make_url
+from sqlalchemy.engine.url import URL
+from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -147,10 +149,52 @@ def normalize_database_url(url: str) -> str:
     return cleaned
 
 
+def validate_database_url(raw_url: str | None, environment: str = "production") -> URL:
+    """Validate database URL using SQLAlchemy make_url before engine creation.
+
+    Enforces dialect and structure requirements while protecting credentials from logs.
+    """
+    if raw_url is None or not str(raw_url).strip():
+        raise ValueError("DATABASE_URL is not set or empty. A valid PostgreSQL connection URL is required in production.")
+
+    raw_str = str(raw_url)
+    if raw_str != raw_str.strip() or raw_str.startswith(('"', "'")) or raw_str.endswith(('"', "'")):
+        raise ValueError(
+            "DATABASE_URL contains surrounding whitespace or quotes. "
+            "Ensure the connection string does not include quotes or surrounding whitespace."
+        )
+
+    normalized = normalize_database_url(raw_str)
+
+    try:
+        url_obj = make_url(normalized)
+    except ArgumentError as exc:
+        raise ValueError(
+            "DATABASE_URL is malformed and could not be parsed as a valid SQLAlchemy URL. "
+            "Please check the connection string format."
+        ) from exc
+
+    is_production = environment.lower() in ("production", "prod")
+    dialect = url_obj.get_backend_name()
+
+    if is_production:
+        if dialect != "postgresql":
+            raise ValueError(
+                f"Production requires a PostgreSQL database (dialect 'postgresql'). "
+                f"Configured dialect '{dialect}' is not permitted in production."
+            )
+        if not url_obj.host:
+            raise ValueError("DATABASE_URL must include a valid host for PostgreSQL connection.")
+
+    return url_obj
+
+
 def get_database_url() -> str:
     """Determine the active database URL. DATABASE_URL takes priority over SQLite."""
     configured = os.getenv("DATABASE_URL")
     if configured and configured.strip():
+        env = os.getenv("ENVIRONMENT", "development").strip().lower()
+        validate_database_url(configured, environment=env)
         return normalize_database_url(configured)
     db_path = database_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)

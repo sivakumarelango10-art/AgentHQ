@@ -51,20 +51,27 @@ class UnifiedSupervisor:
 
     def validate_production_environment(self) -> None:
         self.log("Validating production environment constraints...")
-        db_url = os.getenv("DATABASE_URL", "").strip()
-        if not db_url:
-            self.log("FATAL: DATABASE_URL is not set. A PostgreSQL database connection is required.")
-            sys.exit(1)
+        raw_db_url = os.getenv("DATABASE_URL")
+        environment = os.getenv("ENVIRONMENT", "production").strip()
 
-        if db_url.startswith("sqlite") or "sqlite" in db_url.lower():
-            self.log("FATAL: SQLite is strictly forbidden in production. DATABASE_URL must point to PostgreSQL.")
+        # Ensure backend directory is in sys.path for database validation
+        if str(self.backend_dir) not in sys.path:
+            sys.path.insert(0, str(self.backend_dir))
+
+        try:
+            from app.db import validate_database_url
+            url_obj = validate_database_url(raw_db_url, environment=environment)
+            self.log(f"Environment validation passed. Target database: PostgreSQL (driver: {url_obj.drivername}).")
+        except ValueError as err:
+            self.log(f"FATAL: Database configuration error: {err}")
+            sys.exit(1)
+        except Exception as err:
+            self.log(f"FATAL: Unexpected error validating database URL: {type(err).__name__}")
             sys.exit(1)
 
         if not os.getenv("STUDIO_ACCESS_TOKEN") and not os.getenv("OWNER_PASSWORD_HASH") and not os.getenv("STUDIO_PASSWORD_HASH"):
             self.log("WARNING: STUDIO_ACCESS_TOKEN and password hashes are unset. Setting fallback STUDIO_ACCESS_TOKEN for public bind.")
             os.environ["STUDIO_ACCESS_TOKEN"] = "render-free-secure-gate"
-
-        self.log("Environment validation passed. Target database: PostgreSQL.")
 
     def run_migrations(self) -> None:
         self.log("Executing Alembic database migrations (upgrade head)...")
