@@ -6,6 +6,7 @@ Create Date: 2026-11-15 18:30:00.000000
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Sequence, Union
 
 from alembic import op
@@ -34,11 +35,17 @@ def upgrade() -> None:
     op.add_column("task_executions", sa.Column("last_heartbeat_at", sa.String(length=40), nullable=True))
     op.add_column("task_executions", sa.Column("lease_expires_at", sa.String(length=40), nullable=True))
     op.create_index("idx_task_executions_lease", "task_executions", ["status", "lease_expires_at"])
+    # Give legacy running attempts one lease window to finish before recovering them.
+    # New workers heartbeat and extend this deadline; interrupted old workers expire safely.
+    now = datetime.now(timezone.utc)
+    now_text = now.isoformat()
+    lease_text = (now + timedelta(seconds=300)).isoformat()
     op.execute(
-        "UPDATE task_executions "
-        "SET last_heartbeat_at = COALESCE(started_at, updated_at), "
-        "lease_expires_at = COALESCE(started_at, updated_at) "
-        "WHERE status = 'running'"
+        sa.text(
+            "UPDATE task_executions "
+            "SET last_heartbeat_at = :now_text, lease_expires_at = :lease_text "
+            "WHERE status = 'running'"
+        ).bindparams(now_text=now_text, lease_text=lease_text)
     )
 
 
