@@ -34,6 +34,8 @@ class GitHubIntegrationTests(unittest.TestCase):
                 return httpx.Response(200, json={"default_branch": "main"})
             if request.method == "GET" and path.endswith("/git/ref/heads/main"):
                 return httpx.Response(200, json={"object": {"sha": "a" * 40}})
+            if request.method == "GET" and "/git/ref/heads/" in path and not path.endswith("/main"):
+                return httpx.Response(404, json={"message": "Not Found"})
             if request.method == "GET" and path.endswith("/git/commits/" + "a" * 40):
                 return httpx.Response(200, json={"tree": {"sha": "b" * 40}})
             if request.method == "POST" and path.endswith("/git/blobs"):
