@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected="f8046e204890f59b88f9f31dbc74cbda1f3c7c8e"
+          expected="ca3ba1d02fa0d0bfa2e5e249c54f58c1197bb0b1"
           actual="$(git ls-tree HEAD hermes3d | awk '{print $3}')"
           if [[ "${actual}" != "${expected}" ]]; then
             echo "Expected Hermes3D ${expected}, got ${actual}"
