@@ -111,7 +111,7 @@ jobs:
           if [[ "$profile" == "auto" ]]; then
             if [[ -f package.json ]]; then
               profile="node"
-            elif [[ -f requirements.txt ]]; then
+            elif [[ -f requirements.txt || -f backend/requirements.txt ]]; then
               profile="python"
             else
               echo "No supported Node.js or Python project manifest was found."
@@ -122,8 +122,8 @@ jobs:
             echo "Node.js profile requires package.json."
             exit 1
           fi
-          if [[ "$profile" == "python" && ! -f requirements.txt ]]; then
-            echo "Python profile requires requirements.txt."
+          if [[ "$profile" == "python" && ! -f requirements.txt && ! -f backend/requirements.txt ]]; then
+            echo "Python profile requires requirements.txt or backend/requirements.txt."
             exit 1
           fi
           echo "selected=$profile" >> "$GITHUB_OUTPUT"
@@ -170,6 +170,8 @@ jobs:
           python -m pip install --disable-pip-version-check pytest
           if [[ -f requirements.txt ]]; then
             python -m pip install --disable-pip-version-check -r requirements.txt
+          elif [[ -f backend/requirements.txt ]]; then
+            python -m pip install --disable-pip-version-check -r backend/requirements.txt
           fi
 
       - name: Run Python tests
@@ -177,8 +179,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m compileall -q .
-          python -m pytest -q
+          if [[ -d backend/tests && -f backend/requirements.txt ]]; then
+            python -m compileall -q backend/app
+            (
+              cd backend
+              PYTHONPATH=. python -m unittest discover -s tests -v
+            )
+          else
+            python -m compileall -q .
+            python -m pytest -q
+          fi
 
   publish-result:
     if: always()
